@@ -19,9 +19,11 @@ function log(msg: string) {
 
 if (FRESH) {
   log('FRESH=1 — wiping database…');
+  db.pragma('foreign_keys = OFF'); // works.current_version_id ↔ work_versions is circular
   for (const t of ['flags', 'ai_outputs', 'comments', 'edge_votes', 'edges', 'authorships', 'authors', 'subunits', 'work_versions', 'works', 'sessions', 'users']) {
     db.prepare(`DELETE FROM ${t}`).run();
   }
+  db.pragma('foreign_keys = ON');
 }
 
 const existing = (db.prepare('SELECT COUNT(*) AS c FROM works').get() as { c: number }).c;
