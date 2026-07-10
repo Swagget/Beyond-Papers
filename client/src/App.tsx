@@ -1,10 +1,12 @@
+import { Suspense, lazy } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Header from './components/Header';
 import HomePage from './pages/HomePage';
 import WorkPage from './pages/WorkPage';
 import EditWorkPage from './pages/EditWorkPage';
 import VersionsPage from './pages/VersionsPage';
-import GraphPage from './pages/GraphPage';
+
+const GraphPage = lazy(() => import('./pages/GraphPage')); // cytoscape is heavy — own chunk
 import SubmitPage from './pages/SubmitPage';
 import ImportPage from './pages/ImportPage';
 import ProfilePage from './pages/ProfilePage';
@@ -29,7 +31,14 @@ export default function App() {
           <Route path="/works/:id" element={<WorkPage />} />
           <Route path="/works/:id/edit" element={<EditWorkPage />} />
           <Route path="/works/:id/versions" element={<VersionsPage />} />
-          <Route path="/works/:id/graph" element={<GraphPage />} />
+          <Route
+            path="/works/:id/graph"
+            element={
+              <Suspense fallback={<div className="empty-state">Loading graph…</div>}>
+                <GraphPage />
+              </Suspense>
+            }
+          />
           <Route path="/works/:id/review" element={<ReviewComposerPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/users/:id" element={<ProfilePage />} />
