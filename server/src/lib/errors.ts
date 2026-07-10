@@ -1,36 +1,41 @@
 import type { Request, Response, NextFunction } from 'express';
 
-/** Typed API error. Throw from route handlers; errorHandler converts to JSON. */
-export class ApiError extends Error {
+/** Typed API error (spec §14). Throw from route handlers; errorHandler converts to JSON. */
+export class AppError extends Error {
   constructor(
-    public status: number,
+    public statusCode: number,
     public code: string,
     message: string,
+    public details?: unknown,
   ) {
     super(message);
   }
 }
 
-export const badRequest = (msg: string, code = 'bad_request') => new ApiError(400, code, msg);
-export const unauthorized = (msg = 'Authentication required') => new ApiError(401, 'unauthorized', msg);
-export const forbidden = (msg: string, code = 'forbidden') => new ApiError(403, code, msg);
-export const notFound = (msg = 'Not found') => new ApiError(404, 'not_found', msg);
-export const conflict = (msg: string, code = 'conflict') => new ApiError(409, code, msg);
-
+export const validationError = (msg: string, details?: unknown) =>
+  new AppError(400, 'VALIDATION_ERROR', msg, details);
+export const unauthorized = (msg = 'Authentication required') => new AppError(401, 'UNAUTHORIZED', msg);
+export const forbidden = (msg: string) => new AppError(403, 'FORBIDDEN', msg);
 /** §3 license-gate refusals get a distinct code so clients (and tests) can assert on them. */
-export const licenseForbidden = (msg: string) => new ApiError(403, 'license_forbidden', msg);
+export const licenseGate = (msg: string, status: 403 | 422 = 403) => new AppError(status, 'LICENSE_GATE', msg);
+export const notFound = (msg = 'Not found') => new AppError(404, 'NOT_FOUND', msg);
+export const conflict = (msg: string) => new AppError(409, 'CONFLICT', msg);
+export const invalidTransition = (msg: string) => new AppError(422, 'INVALID_TRANSITION', msg);
+export const upstreamError = (msg: string) => new AppError(502, 'UPSTREAM_ERROR', msg);
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
-  if (err instanceof ApiError) {
-    res.status(err.status).json({ error: { code: err.code, message: err.message } });
+  if (err instanceof AppError) {
+    res.status(err.statusCode).json({
+      error: { code: err.code, message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) },
+    });
     return;
   }
   console.error(err);
-  res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  res.status(500).json({ error: { code: 'INTERNAL', message: 'Internal server error' } });
 }
 
-/** Wrap async route handlers so thrown errors reach errorHandler. */
-export function wrap(fn: (req: Request, res: Response) => Promise<void> | void) {
+/** Wrap async route handlers so rejected promises reach errorHandler (Express 4). */
+export function wrapAsync(fn: (req: Request, res: Response) => Promise<void> | void) {
   return (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(fn(req, res)).catch(next);
   };

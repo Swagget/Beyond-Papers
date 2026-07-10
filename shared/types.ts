@@ -1,145 +1,105 @@
 // Shared types for Beyond Papers — single source of truth for enums and API shapes.
-// Server (Node) and client (Vite) both import from here.
+// Server (Node) and client (Vite) both import from here. Mirrors docs/ARCHITECTURE.md §4.
 
-// ---------- Enums (string unions; must match server/src/schema.sql CHECK constraints) ----------
+// ---------- Enums ----------
 
 export type WorkKind = 'paper' | 'review' | 'replication' | 'concept' | 'dataset' | 'code';
-
 export type ResultNature = 'positive' | 'negative' | 'null' | 'inconclusive' | 'na';
-
 export type EditingMode = 'authored' | 'communal';
-
 export type WorkSource = 'native' | 'openalex' | 'crossref' | 'arxiv' | 'pubmed';
 
-export type License =
-  | 'cc-by'
-  | 'cc-by-sa'
-  | 'cc0'
-  | 'public-domain'
-  | 'platform-cc-by-sa'
-  | 'cc-by-nd'
-  | 'arxiv-default'
-  | 'cc-by-nc'
-  | 'cc-by-nc-sa'
-  | 'cc-by-nc-nd'
-  | 'closed'
-  | 'unknown';
+export type LicenseId =
+  | 'cc-by' | 'cc-by-sa' | 'cc0' | 'public-domain' | 'platform-cc-by-sa'   // Tier C
+  | 'cc-by-nd'                                                              // Tier B
+  | 'arxiv-default' | 'cc-by-nc' | 'cc-by-nc-sa' | 'cc-by-nc-nd' | 'closed' | 'unknown'; // Tier A
 
 export type Tier = 'A' | 'B' | 'C';
 
 export type SubunitType = 'hypothesis' | 'method' | 'result' | 'dataset' | 'code' | 'claim' | 'figure';
 
+export const SUBUNIT_TYPES: SubunitType[] = ['hypothesis', 'method', 'result', 'dataset', 'code', 'claim', 'figure'];
+
+// Standard CRediT taxonomy (https://credit.niso.org/) — exact 14 slugs, no others accepted.
+export type CreditRole =
+  | 'conceptualization' | 'data_curation' | 'formal_analysis' | 'funding_acquisition'
+  | 'investigation' | 'methodology' | 'project_administration' | 'resources'
+  | 'software' | 'supervision' | 'validation' | 'visualization'
+  | 'writing_original_draft' | 'writing_review_editing';
+
+export const CREDIT_ROLES: CreditRole[] = [
+  'conceptualization', 'data_curation', 'formal_analysis', 'funding_acquisition',
+  'investigation', 'methodology', 'project_administration', 'resources',
+  'software', 'supervision', 'validation', 'visualization',
+  'writing_original_draft', 'writing_review_editing',
+];
+
 export type EdgeType =
-  | 'cites'
-  | 'supports'
-  | 'refutes'
-  | 'replicates'
-  | 'fails_to_replicate'
-  | 'extends'
-  | 'uses_method_of'
-  | 'provides_data_for'
-  | 'corrects'
-  | 'supersedes'
-  | 'reviews'
-  | 'comments_on';
+  | 'cites' | 'supports' | 'refutes' | 'replicates' | 'fails_to_replicate'
+  | 'extends' | 'uses_method_of' | 'provides_data_for' | 'corrects' | 'supersedes'
+  | 'reviews' | 'comments_on';
 
 export const EDGE_TYPES: EdgeType[] = [
-  'cites',
-  'supports',
-  'refutes',
-  'replicates',
-  'fails_to_replicate',
-  'extends',
-  'uses_method_of',
-  'provides_data_for',
-  'corrects',
-  'supersedes',
-  'reviews',
-  'comments_on',
+  'cites', 'supports', 'refutes', 'replicates', 'fails_to_replicate',
+  'extends', 'uses_method_of', 'provides_data_for', 'corrects', 'supersedes',
+  'reviews', 'comments_on',
 ];
 
 export type EdgeOrigin = 'human' | 'ai';
-
 export type EdgeStatus = 'suggested' | 'confirmed' | 'disputed' | 'rejected';
 
 export type AiFeature = 'summary' | 'glossary' | 'explainer';
-
 export type AiOutputStatus = 'active' | 'flagged' | 'removed';
 
 export type FlagTargetType = 'ai_output' | 'edge';
-
 export type FlagStatus = 'open' | 'upheld' | 'dismissed';
 
-/** CRediT contributor-role taxonomy (§6.2), kebab-case slugs. */
-export type CreditRole =
-  | 'conceptualization'
-  | 'data-curation'
-  | 'formal-analysis'
-  | 'funding-acquisition'
-  | 'investigation'
-  | 'methodology'
-  | 'project-administration'
-  | 'resources'
-  | 'software'
-  | 'supervision'
-  | 'validation'
-  | 'visualization'
-  | 'writing-original-draft'
-  | 'writing-review-editing';
+export type GraphDirection = 'ancestors' | 'descendants' | 'both';
 
-export const CREDIT_ROLES: CreditRole[] = [
-  'conceptualization',
-  'data-curation',
-  'formal-analysis',
-  'funding-acquisition',
-  'investigation',
-  'methodology',
-  'project-administration',
-  'resources',
-  'software',
-  'supervision',
-  'validation',
-  'visualization',
-  'writing-original-draft',
-  'writing-review-editing',
-];
+export type AiProviderName = 'anthropic' | 'heuristic';
 
 // ---------- License → tier mapping (must match server/src/lib/license.ts) ----------
 
-export const TIER_C_LICENSES: License[] = ['cc-by', 'cc-by-sa', 'cc0', 'public-domain', 'platform-cc-by-sa'];
-export const TIER_B_LICENSES: License[] = ['cc-by-nd'];
-
-export function licenseToTier(license: License): Tier {
-  if (TIER_C_LICENSES.includes(license)) return 'C';
-  if (TIER_B_LICENSES.includes(license)) return 'B';
-  return 'A';
+export function licenseToTier(license: LicenseId): Tier {
+  switch (license) {
+    case 'cc-by': case 'cc-by-sa': case 'cc0': case 'public-domain': case 'platform-cc-by-sa':
+      return 'C';
+    case 'cc-by-nd':
+      return 'B';
+    default: // arxiv-default, cc-by-nc, cc-by-nc-sa, cc-by-nc-nd, closed, unknown
+      return 'A';
+  }
 }
 
-// ---------- Content model ----------
+export const LICENSE_IDS: LicenseId[] = [
+  'cc-by', 'cc-by-sa', 'cc0', 'public-domain', 'platform-cc-by-sa',
+  'cc-by-nd',
+  'arxiv-default', 'cc-by-nc', 'cc-by-nc-sa', 'cc-by-nc-nd', 'closed', 'unknown',
+];
+
+// ---------- Content ----------
 
 export interface Section {
   heading: string;
-  /** Plain text / lightweight markdown body. */
   body: string;
+  order: number;
 }
 
 export interface Reference {
-  /** Free-text citation string. */
-  text: string;
-  doi?: string | null;
-  /** Local work id if the reference resolves to a work in the graph. */
-  work_id?: number | null;
+  label: string;        // e.g. "[1]" or a citation key
+  raw: string;          // formatted citation text as authored
+  work_id?: number;     // resolved internal link, if any
+  doi?: string;
+  url?: string;
 }
 
-/** The canonical, hashed content of a work version (§1.3). */
-export interface VersionContent {
+export interface WorkContent {
   title: string;
   abstract: string;
-  sections: Section[];
+  sections: Section[];    // must be [] when tier === 'A'
   references: Reference[];
 }
 
-// ---------- Entities (as returned by the API) ----------
+// ---------- Core entities ----------
 
 export interface User {
   id: number;
@@ -148,22 +108,10 @@ export interface User {
   is_pseudonym: boolean;
   orcid: string | null;
   bio: string | null;
+  is_admin: boolean;
   created_at: string;
 }
-
-export interface Author {
-  id: number;
-  name: string;
-  orcid: string | null;
-  openalex_author_id: string | null;
-  user_id: number | null;
-}
-
-export interface Authorship {
-  author: Author;
-  position: number;
-  credit_roles: CreditRole[];
-}
+export type PublicUser = User; // password_hash is never selected into a User object at all
 
 export interface Work {
   id: number;
@@ -176,8 +124,9 @@ export interface Work {
   arxiv_id: string | null;
   openalex_id: string | null;
   source: WorkSource;
-  license: License;
+  license: LicenseId;
   tier: Tier;
+  publication_year: number | null;
   current_version_id: number | null;
   created_by: number | null;
   created_at: string;
@@ -188,13 +137,25 @@ export interface WorkVersion {
   id: number;
   work_id: number;
   version_number: number;
-  content: VersionContent;
+  content: WorkContent;   // parsed from content_json
   content_hash: string;
-  license: License;
-  tier: Tier;
+  license: LicenseId;
   change_note: string | null;
   created_by: number | null;
   created_at: string;
+}
+
+export interface AuthorPreview {
+  position: number;
+  name: string;
+  user_id: number | null;
+  author_id: number | null;
+  orcid: string | null;
+  credit_roles: CreditRole[];
+}
+
+export interface WorkSummary extends Work {
+  authors: AuthorPreview[];
 }
 
 export interface Subunit {
@@ -202,12 +163,33 @@ export interface Subunit {
   work_id: number;
   version_id: number;
   type: SubunitType;
-  title: string;
+  title: string | null;
   content: string;
   content_hash: string;
   order_index: number;
   created_by: number | null;
   created_at: string;
+}
+
+export interface WorkDetail extends WorkSummary {
+  current_version: WorkVersion | null; // null only for imported Tier-A stubs before any version exists
+  subunits: Subunit[];                 // [] unless tier === 'C'
+}
+
+export interface Author {
+  id: number;
+  full_name: string;
+  orcid: string | null;
+  openalex_author_id: string | null;
+}
+
+export interface Authorship {
+  id: number;
+  work_id: number;
+  position: number;
+  credit_roles: CreditRole[];
+  user_id: number | null;
+  author_id: number | null;
 }
 
 export interface Edge {
@@ -219,7 +201,6 @@ export interface Edge {
   type: EdgeType;
   origin: EdgeOrigin;
   asserted_by_user: number | null;
-  asserted_by_name?: string | null;
   model: string | null;
   model_version: string | null;
   confidence: number | null;
@@ -228,14 +209,17 @@ export interface Edge {
   confirmed_by: number | null;
   confirmed_at: string | null;
   created_at: string;
-  /** Vote tally for contested edges (§2.4). */
-  vote_score?: number;
-  /** Convenience: titles for rendering. */
+}
+
+export interface EdgeDetail extends Edge {
+  votes: { up: number; down: number; my_vote: -1 | 0 | 1 };
+  /** Convenience for rendering connection lists without extra fetches. */
   source_title?: string;
   target_title?: string;
 }
 
 export interface EdgeVote {
+  id: number;
   edge_id: number;
   user_id: number;
   vote: 1 | -1;
@@ -252,20 +236,27 @@ export interface Comment {
   author_name?: string;
   body: string;
   created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
 }
 
 export interface AiOutput {
   id: number;
   work_id: number;
   feature: AiFeature;
-  content: string;
+  content: string;    // summary/explainer: text or {question,answer} JSON string. glossary: JSON array string.
   model: string;
   model_version: string;
   status: AiOutputStatus;
   edited_by: number | null;
-  supersedes_id: number | null;
+  edited_at: string | null;
+  previous_output_id: number | null;
+  is_current: boolean;
   created_at: string;
 }
+
+export interface GlossaryEntry { term: string; definition: string; }
+export interface ExplainerContent { question: string; answer: string; }
 
 export interface Flag {
   id: number;
@@ -280,47 +271,48 @@ export interface Flag {
   created_at: string;
 }
 
-/** Per-feature AI accuracy track record (§4.5). */
-export interface AiTrackRecord {
-  feature: AiFeature | 'edge_suggestion';
-  total: number;
-  flagged: number;
+export interface AccuracyTrackRecord {
+  feature: AiFeature;
+  open: number;
   upheld: number;
   dismissed: number;
-  open: number;
 }
 
-// ---------- Search & ranking (§8.3 transparent) ----------
+// ---------- Search & Graph ----------
 
-export interface RankingBreakdown {
-  relevance: number;
-  rigor: number;
-  review_activity: number;
-  recency: number;
+export interface ScoreComponents {
+  relevance: number;      // 0..1, from FTS5 bm25
+  rigor: number;          // 0..1, normalized confirmed supports+replications-fails_to_replicate
+  review_count: number;   // 0..1, normalized confirmed 'reviews' edge count
+  recency: number;        // 0..1, exponential decay
+}
+
+export interface SearchResultItem {
+  work: WorkSummary;
+  score: number;              // weighted total, 0..1
+  score_components: ScoreComponents;
+}
+
+export interface SearchResponse {
+  items: SearchResultItem[];
   total: number;
+  limit: number;
+  offset: number;
+  weights: ScoreComponents;    // the weight constants used, for transparency (§8.3)
 }
-
-export interface SearchResult {
-  work: Work;
-  score: RankingBreakdown;
-  snippet?: string;
-}
-
-// ---------- Graph API ----------
 
 export interface GraphNode {
   id: number;
-  title: string;
   kind: WorkKind;
+  title: string;
   result_nature: ResultNature;
   tier: Tier;
-  year?: number | null;
 }
 
 export interface GraphEdge {
   id: number;
-  source: number;
-  target: number;
+  source_work_id: number;
+  target_work_id: number;
   type: EdgeType;
   origin: EdgeOrigin;
   status: EdgeStatus;
@@ -328,16 +320,26 @@ export interface GraphEdge {
 }
 
 export interface GraphResponse {
-  center: number;
+  root_id: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  truncated: boolean;
 }
 
-// ---------- API error shape ----------
+// ---------- Misc ----------
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ImportResult {
+  work: WorkDetail;
+  created: boolean;   // false when deduped onto an existing work
+}
 
 export interface ApiError {
-  error: {
-    code: string;
-    message: string;
-  };
+  error: { code: string; message: string; details?: unknown };
 }
