@@ -23,3 +23,23 @@ Short record of what was done, in order. Newest at the bottom.
   - Backend: 7 sonnet agents (auth/users, works, edges, reviews+comments, AI+flags, importers, search/graph/export) — disjoint file ownership.
   - Frontend: 6 agents (home+discovery, work detail, graph+versions, forms, profile/auth/admin, static pages).
 - Meanwhile wrote scripts/seed.ts (live OpenAlex ML/CS beachhead + native demo content incl. negative-result replication, concept node, review, AI suggestions, resolved flag), scripts/apitest.ts (self-contained E2E harness on temp DB), Dockerfile, .env.example. Pushed.
+
+## 2026-07-10 — Implementation lands, QA, ship
+
+- **00:1x** Backend workflow finished: all 7 modules, zero type errors on integration. **E2E suite: 48/48 passing** on first full run — license gates (Tier A/B/C refusals), AI trust boundary (suggested-edge exclusion, promotion), immutability (revert reproduces hash), state machine, exports. Pushed.
+- **00:2x** Seed verified against live OpenAlex: 40 imported works w/ real licenses (mixed tiers), 50 metadata `cites` edges, native demo content (negative-result replication w/ `fails_to_replicate` edge, communal concept node, dataset node, review-as-work, AI summary + 3 suggested edges, upheld + open flags). Fixed FK ordering in FRESH wipe. Pushed.
+- **00:3x** Frontend workflow finished: all 17 pages + work-detail components; client builds clean. Code-split cytoscape (main bundle 281 kB). Live smoke test on seeded DB: SPA, search w/ ranking breakdown, work detail, graph traversal, AI track record all serving. Pushed.
+- **00:4x** Wrote README (quick start, deploy, layout, the two boundaries) + MIT LICENSE. Pushed.
+- **01:0x** Adversarial QA workflow (4 attack dimensions → per-finding adversarial verification, 11 agents): 9 raw findings, 8 confirmed real, 0 false-accepts. Fixed all 8:
+  - **Blocker:** AI outputs (summaries/glossaries) generated at Tier-C full-text scope survived a later license downgrade to Tier A/B and kept publicly leaking full-section text. Fix: `addVersion` now retires all current AI outputs in the same transaction when the new tier forbids full-text transformation.
+  - Major: flag `upheld+remove` now removes the whole edit chain (an edit made between flag and resolution no longer survives); explainer Q&As accumulate instead of hiding the previous answer; disputed edges got their legal re-affirm/reject UI.
+  - Minor: header nav pointed at old route names; review-edit kind mis-default; revert-path downgrade now 409 like PATCH; `/works/:id/edges` 404s on missing work.
+  - Added 3 regression tests; **E2E suite now 53/53.** Pushed.
+- **01:1x** Demo server restarted on fixed code, healthy at http://localhost:3000 (seeded DB). Final push.
+
+### How to run
+`npm install && npm install --prefix client && npm run build && npm run seed && npm start` → http://localhost:3000
+Logins: `admin/admin-demo-2026`, `achen/demo-password`, `bkumar/demo-password`, `quasar/demo-password` (pseudonymous).
+
+### Cost/agent summary
+2 design agents + 7 backend + 6 frontend + 11 QA (find+verify) agents, all sonnet/haiku via workflows; orchestration and shared/load-bearing code (schema, workStore, trust-surface components, seed, E2E harness) done in the main loop.
