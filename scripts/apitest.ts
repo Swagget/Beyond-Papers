@@ -192,6 +192,38 @@ async function main() {
   const track = await req('GET', '/api/ai/track-record');
   check('track record public + has upheld', track.status === 200 && (track.json?.items ?? []).some((r: any) => r.upheld >= 1));
 
+  // Regression: flag-then-edit-then-remove must remove the edited descendant too.
+  const sum2 = await req('POST', `/api/works/${cId}/ai/summarize`, undefined, t1);
+  const flag2 = await req('POST', '/api/flags', { target_type: 'ai_output', target_id: sum2.json?.output?.id, reason: 'Wrong.' }, t2);
+  const editAfterFlag = await req('PATCH', `/api/ai/${sum2.json?.output?.id}`, { content: 'Edited after flag.' }, t2);
+  await req('POST', `/api/flags/${flag2.json?.flag?.id}/resolve`, { status: 'upheld', action: 'remove', resolution_note: 'x' }, t1);
+  const aiAfter2 = await req('GET', `/api/works/${cId}/ai?feature=summary`);
+  const editedSurvives = (aiAfter2.json?.items ?? []).some((o: any) => o.id === editAfterFlag.json?.output?.id);
+  check('upheld+remove also removes post-flag edit (chain)', !editedSurvives);
+
+  // Regression: explainer Q&As accumulate — second question must not hide the first.
+  const q1 = await req('POST', `/api/works/${cId}/ai/explain`, { question: 'What is routing?' }, t1);
+  const q2 = await req('POST', `/api/works/${cId}/ai/explain`, { question: 'Why sparse?' }, t1);
+  const explainers = await req('GET', `/api/works/${cId}/ai?feature=explainer`);
+  check('explainer answers accumulate (FAQ)', q1.status === 201 && q2.status === 201 && (explainers.json?.items?.length ?? 0) >= 2,
+    `got ${explainers.json?.items?.length}`);
+
+  // Regression (blocker): license downgrade must retire AI outputs that may embed full text.
+  const leakWork = await req('POST', '/api/works', {
+    kind: 'paper', title: 'Leak test work about unique marker content', abstract: 'Abstract.',
+    license: 'cc-by', sections: [{ heading: 'Secret', body: 'TOPSECRET-MARKER-9000 must never survive a license downgrade to tier A.', order: 1 }], references: [],
+  }, t1);
+  const lwId = leakWork.json?.work?.id;
+  await req('POST', `/api/works/${lwId}/ai/summarize`, undefined, t1);
+  const preDowngrade = await req('GET', `/api/works/${lwId}/ai`);
+  check('pre-downgrade summary exists', (preDowngrade.json?.items?.length ?? 0) >= 1);
+  const dg = await req('PATCH', `/api/works/${lwId}`, { change_note: 'license correction', license: 'closed', sections: [] }, t1);
+  check('downgrade to closed succeeds (no subunits)', dg.status === 200 && dg.json?.work?.tier === 'A');
+  const postDowngrade = await req('GET', `/api/works/${lwId}/ai`);
+  const leaked = JSON.stringify(postDowngrade.json ?? {}).includes('TOPSECRET-MARKER-9000');
+  check('downgrade retires AI outputs (no full-text leak)', (postDowngrade.json?.items?.length ?? 0) === 0 && !leaked,
+    `items=${postDowngrade.json?.items?.length} leaked=${leaked}`);
+
   // ---------- search & ranking (§8) ----------
   console.log('\nSearch & ranking (§8):');
   const search = await req('GET', '/api/search?q=routing');

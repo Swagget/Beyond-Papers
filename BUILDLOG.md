@@ -17,3 +17,9 @@ Short record of what was done, in order. Newest at the bottom.
   - Client shell: router with 12 routes, API wrapper, auth context, sticky header.
 - Launched architecture-spec agent (docs/ARCHITECTURE.md) and design-system agent (tokens/base/components CSS + docs/DESIGN.md) in parallel.
 - Verified OpenAlex API live + response shape (license field, ORCID, referenced_works, inverted abstract) for the importer/seed phase.
+- **23:0x** Design system landed (violet reserved exclusively for AI content; 12 edge-type colors; tier chips; dignified negative-result styling). Client builds with it. Pushed.
+- **23:3x** Architecture spec landed (1029 lines: full DDL, ~50 routes, ranking formula, invariants, QA checklist). Reconciled scaffold to it — schema rebuilt (is_admin, authorship user/author split, AI-output edit chains, comment soft-delete, edge provenance CHECKs + UNIQUE triple), shared/types.ts aligned, libs renamed to spec API. Deviations documented in spec §19. Pushed.
+- **23:4x** Wrote shared `workStore` service (sole writer of works/versions — owns license write-gates + content addressing) and shared trust-surface components (Badges, WorkCard). Launched TWO parallel implementation workflows:
+  - Backend: 7 sonnet agents (auth/users, works, edges, reviews+comments, AI+flags, importers, search/graph/export) — disjoint file ownership.
+  - Frontend: 6 agents (home+discovery, work detail, graph+versions, forms, profile/auth/admin, static pages).
+- Meanwhile wrote scripts/seed.ts (live OpenAlex ML/CS beachhead + native demo content incl. negative-result replication, concept node, review, AI suggestions, resolved flag), scripts/apitest.ts (self-contained E2E harness on temp DB), Dockerfile, .env.example. Pushed.

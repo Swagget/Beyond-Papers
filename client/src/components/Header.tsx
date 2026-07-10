@@ -28,9 +28,9 @@ export default function Header() {
           />
         </form>
         <nav className="site-nav">
-          <Link to="/submit">Submit</Link>
+          <Link to="/works/new">Submit</Link>
           <Link to="/import">Import</Link>
-          <Link to="/ai-track-record">AI record</Link>
+          <Link to="/ai/track-record">AI record</Link>
           <Link to="/about">About</Link>
           {user ? (
             <>

@@ -157,14 +157,20 @@ function scopedWorkDetail(workId: number, scope: 'abstract' | 'full'): WorkDetai
   };
 }
 
-/** Inserts a new current ai_outputs row for (work, feature), retiring the prior current row. */
+/**
+ * Inserts a new current ai_outputs row for (work, feature). For summary/glossary the
+ * prior current row is retired (one live output per feature); explainer rows accumulate —
+ * each Q&A is independent (§7.3 FAQ semantics), so a new question never hides an old answer.
+ */
 function insertAiOutput(workId: number, feature: AiFeature, content: string): AiOutputRow {
   const { model, model_version } = MODEL_INFO[getAiProviderName()];
   return runInTransaction(() => {
-    db.prepare(`UPDATE ai_outputs SET is_current = 0 WHERE work_id = ? AND feature = ? AND is_current = 1`).run(
-      workId,
-      feature,
-    );
+    if (feature !== 'explainer') {
+      db.prepare(`UPDATE ai_outputs SET is_current = 0 WHERE work_id = ? AND feature = ? AND is_current = 1`).run(
+        workId,
+        feature,
+      );
+    }
     const info = db
       .prepare(
         `INSERT INTO ai_outputs (work_id, feature, content, model, model_version, status, is_current)

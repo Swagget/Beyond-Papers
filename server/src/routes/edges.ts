@@ -205,6 +205,7 @@ router.get(
   wrapAsync(async (req, res) => {
     const workId = Number(req.params.id);
     if (!Number.isInteger(workId)) throw notFound('Work not found');
+    if (!db.prepare('SELECT 1 FROM works WHERE id = ?').get(workId)) throw notFound('Work not found');
 
     const direction = (queryString(req.query.direction) ?? 'both') as EdgeDirection;
     if (direction !== 'out' && direction !== 'in' && direction !== 'both') {

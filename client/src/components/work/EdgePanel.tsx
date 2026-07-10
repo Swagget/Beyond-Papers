@@ -192,6 +192,27 @@ export default function EdgePanel({ workId, edges, onChange }: EdgePanelProps) {
                       Dispute
                     </button>
                   ) : null}
+                  {user && e.status === 'disputed' ? (
+                    // disputed → confirmed (re-affirm) or rejected — the two legal exits (§2.4)
+                    <>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        type="button"
+                        disabled={busyId === e.id}
+                        onClick={() => void confirmEdge(e.id)}
+                      >
+                        Re-affirm
+                      </button>
+                      <button
+                        className="btn btn-sm btn-danger"
+                        type="button"
+                        disabled={busyId === e.id}
+                        onClick={() => void rejectEdge(e.id)}
+                      >
+                        Reject
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             );

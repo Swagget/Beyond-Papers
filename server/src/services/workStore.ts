@@ -4,8 +4,8 @@
 
 import { db, runInTransaction, setCurrentVersion } from '../db.js';
 import { contentHash } from '../lib/hash.js';
-import { licenseToTier, canStoreFullContent } from '../lib/license.js';
-import { licenseGate, notFound } from '../lib/errors.js';
+import { licenseToTier, canStoreFullContent, canAiTransformFullText } from '../lib/license.js';
+import { licenseGate, notFound, conflict } from '../lib/errors.js';
 import type {
   AuthorPreview,
   CreditRole,
@@ -242,7 +242,8 @@ export function addVersion(workId: number, input: AddVersionInput): WorkDetail {
     throw licenseGate(`License '${license}' is Tier A: sections must be empty`, 422);
   }
   if (tier !== 'C' && getSubunits(workId).length > 0) {
-    throw licenseGate('Cannot downgrade below Tier C while subunits exist', 403);
+    // 409 on both the PATCH and revert paths (spec §5 enforcement list).
+    throw conflict('Cannot downgrade below tier C while subunits exist');
   }
 
   return runInTransaction(() => {
@@ -253,6 +254,12 @@ export function addVersion(workId: number, input: AddVersionInput): WorkDetail {
     db.prepare(
       `UPDATE works SET title = ?, abstract = ?, license = ?, tier = ? WHERE id = ?`,
     ).run(content.title, content.abstract, license, tier, workId);
+    if (!canAiTransformFullText(tier)) {
+      // License no longer permits full-text AI transformation: retire existing AI
+      // outputs, which may embed full-section text generated under the old tier.
+      // They can be regenerated at abstract scope on demand (§3.2, invariant §15.1).
+      db.prepare('UPDATE ai_outputs SET is_current = 0 WHERE work_id = ? AND is_current = 1').run(workId);
+    }
     return getWorkDetail(workId)!;
   });
 }

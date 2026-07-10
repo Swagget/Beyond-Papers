@@ -144,7 +144,19 @@ router.post(
         // edges: nothing was changed at flag-creation time, so nothing to revert.
       } else if (resolveStatus === 'upheld' && action === 'remove') {
         if (flag.target_type === 'ai_output') {
-          db.prepare(`UPDATE ai_outputs SET status = 'removed' WHERE id = ?`).run(flag.target_id);
+          // Remove the flagged row AND any later edits of it (the edit chain via
+          // previous_output_id) — otherwise an edit made between flag and resolution
+          // would silently survive the removal decision.
+          let currentId: number | undefined = flag.target_id;
+          const seen = new Set<number>();
+          while (currentId !== undefined && !seen.has(currentId)) {
+            seen.add(currentId);
+            db.prepare(`UPDATE ai_outputs SET status = 'removed' WHERE id = ?`).run(currentId);
+            const next = db
+              .prepare('SELECT id FROM ai_outputs WHERE previous_output_id = ?')
+              .get(currentId) as { id: number } | undefined;
+            currentId = next?.id;
+          }
         } else {
           db.prepare(`UPDATE edges SET status = 'rejected' WHERE id = ?`).run(flag.target_id);
         }

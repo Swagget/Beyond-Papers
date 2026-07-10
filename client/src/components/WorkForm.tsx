@@ -112,7 +112,9 @@ function emptyReference(): Reference {
 }
 
 export default function WorkForm({ initial, mode, onSubmit, submitLabel, busy }: WorkFormProps) {
-  const showKind = mode !== 'review';
+  // Hide the kind selector when composing a review AND when editing an existing
+  // review-kind work — kind is immutable and 'review' isn't a selectable option.
+  const showKind = mode !== 'review' && initial?.kind !== 'review';
   const showResultNature = mode !== 'review';
 
   const [kind, setKind] = useState<WorkKind>(initial?.kind && initial.kind !== 'review' ? initial.kind : 'paper');
@@ -184,7 +186,7 @@ export default function WorkForm({ initial, mode, onSubmit, submitLabel, busy }:
     setSubmitError(null);
     if (errs.length > 0) return;
 
-    const effectiveKind: WorkKind = showKind ? kind : 'paper';
+    const effectiveKind: WorkKind = showKind ? kind : (initial?.kind ?? (mode === 'review' ? 'review' : 'paper'));
     const effectiveEditing: EditingMode = isConcept ? 'communal' : effectiveKind === 'concept' ? 'communal' : editing;
 
     const payload: WorkFormPayload = {
