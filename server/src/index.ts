@@ -23,17 +23,19 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(optionalAuth);
 
+// Routers that own nested /works/:id/... subpaths are mounted at /api and
+// define full paths themselves (/works/..., /edges/..., etc).
 app.use('/api/auth', authRouter);
-app.use('/api/works', worksRouter);
-app.use('/api/edges', edgesRouter);
-app.use('/api', reviewsRouter); // comments + review helpers live under /api/works/:id/... and /api/comments
-app.use('/api/ai', aiRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/import', importRouter);
-app.use('/api', exportRouter); // /api/works/:id/export/*, /api/versions/:hash
 app.use('/api/graph', graphRouter);
 app.use('/api/flags', flagsRouter);
+app.use('/api', exportRouter); // /works/:id/export/*, /versions/:hash — before worksRouter so export wins
+app.use('/api', worksRouter); // /works ...
+app.use('/api', edgesRouter); // /edges ..., /works/:id/edges
+app.use('/api', reviewsRouter); // /works/:id/reviews, /works/:id/comments, /comments/:id
+app.use('/api', aiRouter); // /works/:id/ai/*, /ai/:id, /ai/track-record
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
