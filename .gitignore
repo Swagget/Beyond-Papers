@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.idea/
+*.log
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
