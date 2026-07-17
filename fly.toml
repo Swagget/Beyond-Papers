@@ -1,0 +1,32 @@
+# Fly.io config — Beyond Papers, single-machine personal deployment.
+# Deploy with `fly deploy --ha=false` — SQLite requires exactly one machine/volume.
+app = "beyond-papers"
+primary_region = "bom"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  DB_PATH = "/app/data/beyond.db"
+
+[mounts]
+  source = "beyond_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

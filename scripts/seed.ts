@@ -44,7 +44,7 @@ function createUser(username: string, password: string, display: string, opts: {
   return Number(res.lastInsertRowid);
 }
 
-const admin = createUser('admin', 'admin-demo-2026', 'Site Admin', { admin: true, bio: 'Moderation account for the demo instance.' });
+const admin = createUser('admin', process.env.ADMIN_PASSWORD ?? 'admin-demo-2026', 'Site Admin', { admin: true, bio: 'Moderation account for the demo instance.' });
 const alice = createUser('achen', 'demo-password', 'Alice Chen', {
   orcid: '0000-0002-1825-0097',
   bio: 'ML researcher. Interested in in-context learning and honest negative results.',
