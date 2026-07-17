@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { AiOutput, Comment, EdgeDetail, SubunitType, WorkDetail, WorkSummary } from '@shared/types';
+import type { AiOutput, Comment, EdgeDetail, SubunitType, WorkChat, WorkDetail, WorkSummary } from '@shared/types';
 import { SUBUNIT_TYPES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import { useAuth } from '../auth';
@@ -43,6 +43,9 @@ export default function WorkPage() {
   const [aiOutputs, setAiOutputs] = useState<AiOutput[]>([]);
   const [aiLoading, setAiLoading] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  const [chats, setChats] = useState<WorkChat[]>([]);
+  const [chatsLoading, setChatsLoading] = useState(true);
 
   const loadWork = useCallback(async () => {
     setWorkLoading(true);
@@ -109,13 +112,26 @@ export default function WorkPage() {
     }
   }, [workId]);
 
+  const loadChats = useCallback(async () => {
+    setChatsLoading(true);
+    try {
+      const res = await api.get<{ items: WorkChat[] }>(`/api/works/${workId}/chats`);
+      setChats(res.items);
+    } catch {
+      setChats([]); // non-critical rail content — fail quiet
+    } finally {
+      setChatsLoading(false);
+    }
+  }, [workId]);
+
   useEffect(() => {
     void loadWork();
     void loadEdges();
     void loadComments();
     void loadReviews();
     void loadAi();
-  }, [loadWork, loadEdges, loadComments, loadReviews, loadAi]);
+    void loadChats();
+  }, [loadWork, loadEdges, loadComments, loadReviews, loadAi, loadChats]);
 
   // Sub-unit mini-form (Tier C only)
   const [subType, setSubType] = useState<SubunitType>(SUBUNIT_TYPES[0]);
@@ -490,6 +506,40 @@ export default function WorkPage() {
               <Link className="btn btn-ghost btn-sm" to="/login" style={{ alignSelf: 'flex-start' }}>
                 Log in to write a review
               </Link>
+            )}
+          </div>
+
+          <div className="stack gap-3">
+            <h2 style={{ fontSize: 'var(--font-size-lg)' }}>Conversations</h2>
+            {chatsLoading ? (
+              <div className="stack gap-2">
+                <div className="skeleton skeleton-text" />
+              </div>
+            ) : chats.length === 0 ? (
+              <p className="small muted">
+                No verified conversations reference this work yet.{' '}
+                <Link to="/chats/new">Upload one</Link>.
+              </p>
+            ) : (
+              <div className="stack gap-3">
+                {chats.map(({ chat, link }) => (
+                  <article className="review-card" key={link.id}>
+                    <header className="review-card-head">
+                      <Link to={`/chats/${chat.id}`} style={{ fontWeight: 'var(--font-weight-semibold)' }}>
+                        {chat.title}
+                      </Link>
+                      <time className="review-card-date" dateTime={chat.created_at.slice(0, 10)}>
+                        {chat.created_at.slice(0, 10)}
+                      </time>
+                    </header>
+                    <p className="review-card-body small muted">
+                      <span className="badge">{chat.platform}</span> Verified by{' '}
+                      {chat.uploader_name ?? `user #${chat.uploaded_by}`}
+                      {link.origin === 'ai' ? ' · AI-matched, uploader-confirmed' : ''}
+                    </p>
+                  </article>
+                ))}
+              </div>
             )}
           </div>
 

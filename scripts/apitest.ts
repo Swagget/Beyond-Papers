@@ -242,6 +242,53 @@ async function main() {
   const cjson = await req('GET', `/api/works/${cId}/export/json`);
   check('JSON export with beyond-papers ext', cjson.status === 200 && !!cjson.json?.['beyond-papers']?.current_version_hash);
 
+  // ---------- chats (uploaded AI conversations) ----------
+  console.log('\nChats (uploaded conversations):');
+  const chatTx =
+    'User: Can you explain the transformer architecture and attention mechanisms in the routing paper?\n' +
+    'Assistant: The routing approach uses attention over graph structure to decide which papers relate to each other.';
+  const chatUp = await req('POST', '/api/chats', { transcript: chatTx, url: 'https://claude.ai/share/test1' }, t1);
+  const chatId = chatUp.json?.chat?.id;
+  check('chat upload 201 + platform inferred', chatUp.status === 201 && chatUp.json?.chat?.platform === 'claude');
+  const chatLinks = chatUp.json?.chat?.links ?? [];
+  check('AI-suggested links carry provenance', chatLinks.every((l: any) => l.origin === 'ai' && l.status === 'suggested' && l.model && l.confidence !== null));
+  const tooShort = await req('POST', '/api/chats', { transcript: 'too short' }, t1);
+  check('short transcript → 400', tooShort.status === 400);
+  const anonChat = await req('GET', `/api/chats/${chatId}`);
+  check('pending chat hidden from others (404)', anonChat.status === 404);
+  const otherChat = await req('GET', `/api/chats/${chatId}`, undefined, t2);
+  check('pending chat hidden from other users too', otherChat.status === 404);
+  const manual = await req('POST', `/api/chats/${chatId}/links`, { work_id: cId }, t1);
+  // If the matcher already suggested this work, manual attach promotes that AI link instead
+  // of inserting a human one — either way it must end up confirmed.
+  check('manual attach → link confirmed', manual.status === 201 &&
+    (manual.json?.chat?.links ?? []).some((l: any) => l.work_id === cId && l.status === 'confirmed'));
+  const notUploader = await req('POST', `/api/chats/${chatId}/verify`, undefined, t2);
+  check('non-uploader verify → 404/403', notUploader.status === 404 || notUploader.status === 403);
+  // Resolve any remaining suggestions, then verify.
+  const fresh = await req('GET', `/api/chats/${chatId}`, undefined, t1);
+  for (const l of fresh.json?.chat?.links ?? []) {
+    if (l.status === 'suggested') await req('POST', `/api/chats/${chatId}/links/${l.id}/reject`, undefined, t1);
+  }
+  const verify = await req('POST', `/api/chats/${chatId}/verify`, undefined, t1);
+  check('verify after resolving suggestions', verify.status === 200 && verify.json?.chat?.status === 'verified');
+  const anonAfter = await req('GET', `/api/chats/${chatId}`);
+  check('verified chat public', anonAfter.status === 200);
+  const workChats = await req('GET', `/api/works/${cId}/chats`);
+  check('work page lists verified chat', workChats.status === 200 &&
+    (workChats.json?.items ?? []).some((i: any) => i.chat.id === chatId && i.link.status === 'confirmed'));
+  const publicList = await req('GET', '/api/chats');
+  check('public chat list = verified only', publicList.status === 200 &&
+    (publicList.json?.items ?? []).every((c: any) => c.status === 'verified'));
+
+  // ---------- graph overview ----------
+  console.log('\nGraph overview:');
+  const overview = await req('GET', '/api/graph');
+  check('field-wide graph: root_id null + nodes + edges arrays', overview.status === 200 &&
+    overview.json?.root_id === null && Array.isArray(overview.json?.nodes) && Array.isArray(overview.json?.edges) && overview.json.nodes.length > 0);
+  const overviewBadType = await req('GET', '/api/graph?types=bogus');
+  check('overview bad edge type → 400', overviewBadType.status === 400);
+
   // ---------- summary ----------
   console.log(`\n=== ${passed} passed, ${failed} failed ===`);
   if (failures.length) {

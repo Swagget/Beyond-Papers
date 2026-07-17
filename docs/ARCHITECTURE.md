@@ -318,6 +318,15 @@ CREATE TRIGGER IF NOT EXISTS works_au AFTER UPDATE ON works BEGIN
 END;
 ```
 
+### Chats — uploaded AI conversations (`chats`, `chat_links`)
+
+Two later-added tables (idempotent, in `schema.sql`) implement uploaded AI conversations attached to works under the §4.1–4.2 trust pattern:
+
+- `chats(id, url, platform ∈ claude|chatgpt|gemini|other, title, transcript, content_hash, uploaded_by → users, status ∈ pending|verified, verified_at, created_at)` — a pasted AI-chat transcript with optional share-link provenance. `status='pending'` chats are visible **only** to their uploader (and admins); routes return 404 to everyone else.
+- `chat_links(id, chat_id → chats CASCADE, work_id → works CASCADE, origin ∈ human|ai, model, model_version, confidence, basis, status ∈ suggested|confirmed|rejected, confirmed_by, confirmed_at, created_at, UNIQUE(chat_id, work_id), CHECK ai ⇒ model+confidence)` — a chat→work attachment. AI-proposed links land as `suggested` with full provenance; only the uploader promotes them to `confirmed` (or `rejected`). Manual uploader attachments are `origin='human'`, instantly `confirmed`.
+
+Matching (`services/chatMatcher.ts`) runs at upload in two lanes: (1) DOIs / arXiv ids literally present in the transcript resolve directly against `works` (model `identifier-extractor`, confidence 0.97); (2) FTS-selected candidates (top transcript terms, OR-query, bm25) go to the configured `AiProvider.matchChat(excerpt, candidates)` (heuristic TF-IDF cosine or Anthropic strict-JSON). The transcript excerpt sent to the provider is capped at 20 000 chars. A chat can only be `verified` once every `suggested` link is resolved; work pages surface only `confirmed` links of `verified` chats.
+
 `db.ts` responsibilities: open `data/beyond.db` (create parent dir if missing), `pragma('foreign_keys = ON')`, `pragma('journal_mode = WAL')`, execute `schema.sql` via `db.exec(readFileSync(...))`, export the `Database` instance plus small helpers: `nowIso()`, `runInTransaction(fn)`, `setCurrentVersion(workId, versionId)` (updates `works.current_version_id` and `works.updated_at`).
 
 ## 4. `shared/types.ts` — Single Source of Truth
@@ -807,6 +816,8 @@ All three importers: dedup by external id before insert (never create a duplicat
 
 BFS from `workId` up to `depth` (default `1`, values outside `1..3` → 400 `VALIDATION_ERROR`). `direction=ancestors` walks incoming edges (`target_work_id = current`, moving to `source_work_id`); `descendants` walks outgoing edges (`source_work_id = current`, moving to `target_work_id`); `both` walks both per hop. `types` (optional, CSV of `EdgeType`) restricts which edge types are traversed/returned; omitted = all types. Filtering rule (always applied, both directions): exclude `status='rejected'` always; exclude `origin='ai' AND status='suggested'` unless `include_ai=true`. Hard cap `500` nodes / `2000` edges per call — if the cap is hit mid-traversal, stop expanding and set `truncated: true`. Response shape is `GraphResponse` (§4 types). This endpoint is the sole data source for the client's graph visualization page.
 
+`GET /api/graph?types=csv&include_ai=bool` (no root) — field-wide overview: the up-to-500 most-connected works (degree over non-rejected edges, ties by recency) plus every qualifying edge among them (same AI/type filtering, capped at 2000, `truncated` set when either cap is hit). `root_id` is `null` in the response; `GraphResponse.root_id` is `number | null` for this reason. Backs the client's `/graph` route.
+
 ## 12. Client Application — page inventory
 
 Visual design ownership sits outside this document (hand-written CSS in `client/src/styles/`); this is the route/data map only.
@@ -815,10 +826,14 @@ Visual design ownership sits outside this document (hand-written CSS in `client/
 |---|---|---|
 | `/` | Home / discovery feed | `GET /api/search` (empty query = recent/top by score) |
 | `/search?q=` | Search results | `GET /api/search` |
-| `/works/:id` | Work detail (renders as a paper: abstract, sections, subunits, authors, edges, reviews, comments) | `GET /api/works/:id`, `GET /api/works/:id/edges`, `GET /api/works/:id/comments`, `GET /api/works/:id/reviews`, `GET /api/works/:id/ai` |
+| `/works/:id` | Work detail (renders as a paper: abstract, sections, subunits, authors, edges, reviews, comments) | `GET /api/works/:id`, `GET /api/works/:id/edges`, `GET /api/works/:id/comments`, `GET /api/works/:id/reviews`, `GET /api/works/:id/ai`, `GET /api/works/:id/chats` |
 | `/works/:id/edit` | New-version editor (auth-gated by edit permission) | `PATCH /api/works/:id` |
 | `/works/:id/versions` | Version history + revert | `GET /api/works/:id/versions`, `POST /api/works/:id/revert` |
 | `/works/:id/graph` | Graph visualization centered on this work | `GET /api/graph/:id` |
+| `/graph` | Field-wide graph explorer (whole corpus, no root) | `GET /api/graph` |
+| `/chats` | Conversation list (verified public + own uploads) | `GET /api/chats`, `GET /api/chats?mine=true` |
+| `/chats/new` | Upload an AI conversation (auth) | `POST /api/chats` |
+| `/chats/:id` | Chat review workbench: confirm/reject suggestions, manual attach, verify, transcript | `GET /api/chats/:id`, `POST /api/chats/:id/links[...]`, `POST /api/chats/:id/verify` |
 | `/works/new` | New work / new review composer | `POST /api/works`, `POST /api/works/:id/reviews` |
 | `/import` | Import-by-DOI/arXiv/OpenAlex form | `POST /api/import/doi`, `/arxiv`, `/openalex` |
 | `/users/:id` | Public profile (§6.1: authored nodes, subunits, reviews, data, code) | `GET /api/users/:id`, `GET /api/users/:id/works`, `GET /api/users/:id/reviews` |
@@ -941,6 +956,23 @@ Concept nodes: `POST /api/works` with `kind:'concept'` forces `editing:'communal
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
 | GET | `/api/graph/:workId` | public | `?depth=1..3&types=csv&direction=ancestors|descendants|both&include_ai=bool` | `200 GraphResponse`, see §11 |
+| GET | `/api/graph` | public | `?types=csv&include_ai=bool` | `200 GraphResponse` (`root_id: null`), field-wide overview, see §11 |
+
+### 13.12 `routes/chats.ts` (uploaded AI conversations)
+
+Visibility rule: `pending` chats 404 for everyone but their uploader (and admins). Uploader-only actions return 403 `FORBIDDEN` for other authenticated users.
+
+| Method | Path | Auth | Request body | Response | Notable errors |
+|---|---|---|---|---|---|
+| POST | `/api/chats` | auth | `{transcript, title?, url?, platform?}` (transcript 40–500 000 chars) | `201 {chat: ChatDetail}` — matcher runs inline, suggestions included | 400 `VALIDATION_ERROR` |
+| GET | `/api/chats` | public | `?mine=true&limit&offset` (`mine` requires auth) | `200 Paginated<ChatSummary>` — verified only unless `mine` | |
+| GET | `/api/chats/:id` | public* | | `200 {chat: ChatDetail}` | 404 if pending & not uploader |
+| POST | `/api/chats/:id/links` | uploader | `{work_id}` | `201 {chat}` — human-origin, instantly confirmed; re-adding a suggested/rejected link confirms it | 404 work |
+| POST | `/api/chats/:id/links/:linkId/confirm` | uploader | | `200 {chat}` | 422 `INVALID_TRANSITION` if already confirmed |
+| POST | `/api/chats/:id/links/:linkId/reject` | uploader | | `200 {chat}` | 422 if already rejected |
+| POST | `/api/chats/:id/verify` | uploader | | `200 {chat}` (status `verified`) | 422 while any link is still `suggested`, or already verified |
+| DELETE | `/api/chats/:id` | uploader/admin | | `204` | |
+| GET | `/api/works/:id/chats` | public | | `200 {items: WorkChat[]}` — confirmed links of verified chats only | 404 work |
 
 ## 14. Error Model — `server/src/lib/errors.ts`
 

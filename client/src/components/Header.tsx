@@ -28,6 +28,8 @@ export default function Header() {
           />
         </form>
         <nav className="site-nav">
+          <Link to="/graph">Graph</Link>
+          <Link to="/chats">Chats</Link>
           <Link to="/works/new">Submit</Link>
           <Link to="/import">Import</Link>
           <Link to="/ai/track-record">AI record</Link>

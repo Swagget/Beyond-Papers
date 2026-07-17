@@ -55,6 +55,11 @@ export type FlagStatus = 'open' | 'upheld' | 'dismissed';
 
 export type GraphDirection = 'ancestors' | 'descendants' | 'both';
 
+export type ChatPlatform = 'claude' | 'chatgpt' | 'gemini' | 'other';
+export const CHAT_PLATFORMS: ChatPlatform[] = ['claude', 'chatgpt', 'gemini', 'other'];
+export type ChatStatus = 'pending' | 'verified';
+export type ChatLinkStatus = 'suggested' | 'confirmed' | 'rejected';
+
 export type AiProviderName = 'anthropic' | 'heuristic';
 
 // ---------- License → tier mapping (must match server/src/lib/license.ts) ----------
@@ -278,6 +283,58 @@ export interface AccuracyTrackRecord {
   dismissed: number;
 }
 
+// ---------- Chats (uploaded AI conversations, §4.1–4.2 trust pattern) ----------
+
+export interface Chat {
+  id: number;
+  url: string | null;
+  platform: ChatPlatform;
+  title: string;
+  transcript: string;
+  content_hash: string;
+  uploaded_by: number;
+  uploader_name?: string;
+  status: ChatStatus;
+  verified_at: string | null;
+  created_at: string;
+}
+
+/** Chat list rows omit the full transcript to keep payloads small. */
+export type ChatSummary = Omit<Chat, 'transcript'> & {
+  confirmed_link_count: number;
+  suggested_link_count: number;
+};
+
+export interface ChatLink {
+  id: number;
+  chat_id: number;
+  work_id: number;
+  origin: EdgeOrigin;
+  model: string | null;
+  model_version: string | null;
+  confidence: number | null;
+  basis: string | null;
+  status: ChatLinkStatus;
+  confirmed_by: number | null;
+  confirmed_at: string | null;
+  created_at: string;
+}
+
+export interface ChatLinkDetail extends ChatLink {
+  work_title: string;
+  work_kind: WorkKind;
+}
+
+export interface ChatDetail extends Chat {
+  links: ChatLinkDetail[];
+}
+
+/** A verified chat as shown on a work page, with the confirming link. */
+export interface WorkChat {
+  chat: Omit<Chat, 'transcript'>;
+  link: ChatLink;
+}
+
 // ---------- Search & Graph ----------
 
 export interface ScoreComponents {
@@ -320,7 +377,8 @@ export interface GraphEdge {
 }
 
 export interface GraphResponse {
-  root_id: number;
+  /** null for the field-wide overview graph (no root work). */
+  root_id: number | null;
   nodes: GraphNode[];
   edges: GraphEdge[];
   truncated: boolean;

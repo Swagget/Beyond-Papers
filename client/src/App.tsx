@@ -19,6 +19,9 @@ import AiTrackRecordPage from './pages/AiTrackRecordPage';
 import ReviewComposerPage from './pages/ReviewComposerPage';
 import VersionPage from './pages/VersionPage';
 import FlagsPage from './pages/FlagsPage';
+import ChatsPage from './pages/ChatsPage';
+import ChatUploadPage from './pages/ChatUploadPage';
+import ChatPage from './pages/ChatPage';
 
 export default function App() {
   return (
@@ -40,6 +43,17 @@ export default function App() {
             }
           />
           <Route path="/works/:id/review" element={<ReviewComposerPage />} />
+          <Route
+            path="/graph"
+            element={
+              <Suspense fallback={<div className="empty-state">Loading graph…</div>}>
+                <GraphPage />
+              </Suspense>
+            }
+          />
+          <Route path="/chats" element={<ChatsPage />} />
+          <Route path="/chats/new" element={<ChatUploadPage />} />
+          <Route path="/chats/:id" element={<ChatPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/users/:id" element={<ProfilePage />} />
           <Route path="/settings" element={<SettingsPage />} />

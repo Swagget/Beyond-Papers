@@ -4,7 +4,7 @@
 // summarization/explanation, regex term extraction for glossary. No external calls, no
 // API key required — the app must be fully demoable with zero API keys and zero cost (§7).
 
-import type { AiProvider, SuggestedEdge } from '../aiProvider.js';
+import type { AiProvider, ChatMatch, SuggestedEdge } from '../aiProvider.js';
 import type { EdgeType, GlossaryEntry, Section, WorkDetail, WorkSummary } from '../../../../shared/types.js';
 
 export const MIN_CONFIDENCE = 0.15;
@@ -175,6 +175,24 @@ export class HeuristicProvider implements AiProvider {
       confidence: s.sim,
       basis: `TF-IDF cosine similarity: ${s.sim.toFixed(2)}`,
     }));
+  }
+
+  async matchChat(transcriptExcerpt: string, candidates: WorkSummary[]): Promise<ChatMatch[]> {
+    const chatTokens = tokenize(transcriptExcerpt);
+    const candidateTokens = candidates.map((c) => tokenize(titleAbstractText(c.title, c.abstract)));
+    const idf = computeIdf([chatTokens, ...candidateTokens]);
+    const chatVec = tfidfVector(chatTokens, idf);
+
+    return candidates
+      .map((c, i) => ({ candidate: c, sim: cosineSimilarity(chatVec, tfidfVector(candidateTokens[i], idf)) }))
+      .filter((s) => s.sim >= MIN_CONFIDENCE)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, MAX_SUGGESTIONS)
+      .map((s) => ({
+        work_id: s.candidate.id,
+        confidence: s.sim,
+        basis: `TF-IDF cosine similarity between the conversation and this work: ${s.sim.toFixed(2)}`,
+      }));
   }
 
   async summarize(work: WorkDetail, scope: 'abstract' | 'full'): Promise<string> {

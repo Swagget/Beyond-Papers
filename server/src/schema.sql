@@ -226,6 +226,46 @@ CREATE INDEX IF NOT EXISTS idx_flags_target ON flags(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_flags_status ON flags(status);
 
 -- ============================================================
+-- CHATS (uploaded AI conversations; attachments follow the §4.1–4.2 trust pattern:
+-- AI-suggested links stay 'suggested' until the uploader confirms them, and a chat
+-- is invisible to other users until the uploader marks it verified)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS chats (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  url          TEXT,                -- share link (claude.ai/share/…, chatgpt.com/share/…), optional
+  platform     TEXT NOT NULL DEFAULT 'other' CHECK (platform IN ('claude','chatgpt','gemini','other')),
+  title        TEXT NOT NULL,
+  transcript   TEXT NOT NULL,       -- pasted conversation text
+  content_hash TEXT NOT NULL,       -- sha256 hex of the transcript
+  uploaded_by  INTEGER NOT NULL REFERENCES users(id),
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','verified')),
+  verified_at  TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chats_uploader ON chats(uploaded_by);
+CREATE INDEX IF NOT EXISTS idx_chats_status ON chats(status);
+
+CREATE TABLE IF NOT EXISTS chat_links (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id       INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  work_id       INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  origin        TEXT NOT NULL CHECK (origin IN ('human','ai')),
+  model         TEXT,
+  model_version TEXT,
+  confidence    REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+  basis         TEXT,
+  status        TEXT NOT NULL DEFAULT 'suggested' CHECK (status IN ('suggested','confirmed','rejected')),
+  confirmed_by  INTEGER REFERENCES users(id),
+  confirmed_at  TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (origin != 'ai' OR (model IS NOT NULL AND confidence IS NOT NULL)),  -- AI links always carry provenance
+  UNIQUE (chat_id, work_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_links_chat ON chat_links(chat_id);
+CREATE INDEX IF NOT EXISTS idx_chat_links_work ON chat_links(work_id, status);
+
+-- ============================================================
 -- FULL-TEXT SEARCH (§8)
 -- ============================================================
 

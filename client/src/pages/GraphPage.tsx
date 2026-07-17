@@ -1,6 +1,8 @@
 // Graph-native navigation (§8.2). Cytoscape canvas centered on :id, with
 // depth/direction/edge-type/AI-inclusion controls and a legend documenting
 // the solid = confirmed / dashed = AI-suggested visual language (§4.2).
+// Without an :id (route /graph) it renders the field-wide overview instead:
+// the most-connected works in the corpus and every edge among them.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import cytoscape from 'cytoscape';
@@ -46,6 +48,7 @@ function truncateTitle(title: string): string {
 
 export default function GraphPage() {
   const { id } = useParams<{ id: string }>();
+  const isOverview = !id;
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -63,7 +66,6 @@ export default function GraphPage() {
   const typesKey = useMemo(() => Array.from(selectedTypes).sort().join(','), [selectedTypes]);
 
   useEffect(() => {
-    if (!id) return;
     if (selectedTypes.size === 0) {
       setData(null);
       setLoading(false);
@@ -74,14 +76,16 @@ export default function GraphPage() {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
-    params.set('depth', String(depth));
-    params.set('direction', direction);
+    if (!isOverview) {
+      params.set('depth', String(depth));
+      params.set('direction', direction);
+    }
     params.set('include_ai', String(includeAi));
     if (selectedTypes.size < EDGE_TYPES.length) {
       params.set('types', typesKey);
     }
     api
-      .get<GraphResponse>(`/api/graph/${id}?${params.toString()}`)
+      .get<GraphResponse>(`/api/graph${isOverview ? '' : `/${id}`}?${params.toString()}`)
       .then((res) => {
         if (cancelled) return;
         setData(res);
@@ -224,12 +228,20 @@ export default function GraphPage() {
 
   return (
     <div className="stack gap-5">
-      <h1>{rootNode ? `Graph: ${rootNode.title}` : 'Work graph'}</h1>
+      <h1>{isOverview ? 'Field graph' : rootNode ? `Graph: ${rootNode.title}` : 'Work graph'}</h1>
+      {isOverview ? (
+        <p className="muted">
+          The whole uploaded corpus at a glance — the most-connected works and every typed edge among them.
+          Click a node to open the work.
+        </p>
+      ) : null}
 
       <div className="flex gap-5 items-start flex-wrap">
         <aside style={{ width: '15rem', flexShrink: 0 }} className="stack gap-4">
           <fieldset>
-            <legend>Traversal</legend>
+            <legend>{isOverview ? 'Filters' : 'Traversal'}</legend>
+            {isOverview ? null : (
+            <>
             <div className="field">
               <label htmlFor="graph-depth">Depth</label>
               <select
@@ -254,6 +266,8 @@ export default function GraphPage() {
                 <option value="descendants">Descendants</option>
               </select>
             </div>
+            </>
+            )}
             <div className="field">
               <span id="graph-edge-types-label">Edge types</span>
               <div className="stack gap-1" role="group" aria-labelledby="graph-edge-types-label">
@@ -312,9 +326,11 @@ export default function GraphPage() {
             </div>
           ) : data && data.nodes.length === 0 ? (
             <div className="empty-state">
-              <p className="empty-state-title">No connections found</p>
+              <p className="empty-state-title">{isOverview ? 'No works yet' : 'No connections found'}</p>
               <p className="empty-state-body">
-                This work has no connections matching the current filters.
+                {isOverview
+                  ? 'Nothing has been uploaded or imported yet — the graph will fill in as works arrive.'
+                  : 'This work has no connections matching the current filters.'}
               </p>
             </div>
           ) : (

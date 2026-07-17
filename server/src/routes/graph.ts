@@ -22,6 +22,89 @@ interface EdgeRow {
   confidence: number | null;
 }
 
+/** Shared query-param parsing for both graph endpoints. */
+function parseGraphFilters(req: { query: Record<string, unknown> }): {
+  types: EdgeType[] | undefined;
+  includeAi: boolean;
+} {
+  let types: EdgeType[] | undefined;
+  const rawTypes = req.query.types;
+  if (typeof rawTypes === 'string' && rawTypes.length > 0) {
+    const requested = rawTypes
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    for (const t of requested) {
+      if (!(EDGE_TYPES as string[]).includes(t)) {
+        throw validationError(`Unknown edge type: ${t}`);
+      }
+    }
+    types = requested as EdgeType[];
+  }
+  return { types, includeAi: req.query.include_ai === 'true' };
+}
+
+// GET /api/graph — field-wide overview: the most-connected works and every edge
+// among them, so the whole uploaded corpus can be explored without picking a root.
+router.get(
+  '/',
+  wrapAsync(async (req, res) => {
+    const { types, includeAi } = parseGraphFilters(req as { query: Record<string, unknown> });
+
+    const nodeRows = db
+      .prepare(
+        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier,
+                (SELECT COUNT(*) FROM edges e
+                 WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
+         FROM works w
+         ORDER BY degree DESC, w.created_at DESC
+         LIMIT ?`,
+      )
+      .all(MAX_NODES + 1) as (GraphNode & { degree: number })[];
+
+    const truncatedNodes = nodeRows.length > MAX_NODES;
+    const nodes: GraphNode[] = nodeRows
+      .slice(0, MAX_NODES)
+      .map(({ degree: _degree, ...n }) => n);
+    const idList = nodes.map((n) => n.id);
+
+    let edges: GraphEdge[] = [];
+    let truncatedEdges = false;
+    if (idList.length > 0) {
+      const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
+      const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
+      const placeholders = idList.map(() => '?').join(',');
+      const rows = db
+        .prepare(
+          `SELECT id, source_work_id, target_work_id, type, origin, status, confidence
+           FROM edges
+           WHERE status != 'rejected' ${aiClause} ${typeClause}
+             AND source_work_id IN (${placeholders}) AND target_work_id IN (${placeholders})
+           LIMIT ?`,
+        )
+        .all(...(types ?? []), ...idList, ...idList, MAX_EDGES + 1) as EdgeRow[];
+      truncatedEdges = rows.length > MAX_EDGES;
+      edges = rows.slice(0, MAX_EDGES).map((e) => ({
+        id: e.id,
+        source_work_id: e.source_work_id,
+        target_work_id: e.target_work_id,
+        type: e.type,
+        origin: e.origin,
+        status: e.status,
+        confidence: e.confidence,
+      }));
+    }
+
+    const response: GraphResponse = {
+      root_id: null,
+      nodes,
+      edges,
+      truncated: truncatedNodes || truncatedEdges,
+    };
+    res.json(response);
+  }),
+);
+
 router.get(
   '/:workId',
   wrapAsync(async (req, res) => {

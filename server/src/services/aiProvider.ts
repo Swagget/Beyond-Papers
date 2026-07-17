@@ -17,8 +17,19 @@ export interface SuggestedEdge {
   basis: string;
 }
 
+/** An AI-proposed chat→work attachment, not yet inserted. Route layer (routes/chats.ts)
+ * owns insertion and forcing origin/status per the §4.1–4.2 trust pattern. */
+export interface ChatMatch {
+  work_id: number;
+  confidence: number; // 0..1
+  basis: string;
+}
+
 export interface AiProvider {
   suggestEdges(work: WorkDetail, candidates: WorkSummary[]): Promise<SuggestedEdge[]>;
+  /** Which candidate works does this conversation transcript actually discuss?
+   * Receives a length-capped transcript excerpt, never the raw upload. */
+  matchChat(transcriptExcerpt: string, candidates: WorkSummary[]): Promise<ChatMatch[]>;
   summarize(work: WorkDetail, scope: 'abstract' | 'full'): Promise<string>;
   glossary(work: WorkDetail, scope: 'abstract' | 'full'): Promise<GlossaryEntry[]>;
   /**
