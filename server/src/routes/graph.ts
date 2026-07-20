@@ -44,12 +44,160 @@ function parseGraphFilters(req: { query: Record<string, unknown> }): {
   return { types, includeAi: req.query.include_ai === 'true' };
 }
 
+/** Works rows (with corpus-wide degree) for a set of ids. */
+function fetchGraphNodes(idList: number[]): GraphNode[] {
+  if (idList.length === 0) return [];
+  return db
+    .prepare(
+      `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
+              (SELECT COUNT(*) FROM edges e
+               WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
+       FROM works w WHERE w.id IN (${idList.map(() => '?').join(',')})`,
+    )
+    .all(...idList) as GraphNode[];
+}
+
+/**
+ * BFS node discovery from one or more roots, up to `depth` hops, honoring
+ * direction/type/AI filters. Returns the reached node ids only — callers fetch
+ * every matching edge among the final set so sibling links are never dropped.
+ */
+function collectNeighborhood(
+  rootIds: number[],
+  depth: number,
+  direction: Direction,
+  types: EdgeType[] | undefined,
+  includeAi: boolean,
+): { nodeIds: Set<number>; truncated: boolean } {
+  const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
+  const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
+  const baseClause = `status != 'rejected' ${aiClause} ${typeClause}`;
+  const outStmt = db.prepare(
+    `SELECT source_work_id, target_work_id FROM edges WHERE source_work_id = ? AND ${baseClause}`,
+  );
+  const inStmt = db.prepare(
+    `SELECT source_work_id, target_work_id FROM edges WHERE target_work_id = ? AND ${baseClause}`,
+  );
+  const typeParams = types ?? [];
+
+  const nodeIds = new Set<number>(rootIds);
+  let truncated = false;
+  let frontier: number[] = [...rootIds];
+
+  for (let hop = 0; hop < depth; hop++) {
+    if (frontier.length === 0) break;
+    const nextFrontier: number[] = [];
+    for (const current of frontier) {
+      const rows: Array<{ source_work_id: number; target_work_id: number }> = [];
+      if (direction === 'descendants' || direction === 'both') {
+        rows.push(...(outStmt.all(current, ...typeParams) as typeof rows));
+      }
+      if (direction === 'ancestors' || direction === 'both') {
+        rows.push(...(inStmt.all(current, ...typeParams) as typeof rows));
+      }
+      for (const row of rows) {
+        const neighbor = row.source_work_id === current ? row.target_work_id : row.source_work_id;
+        if (nodeIds.has(neighbor)) continue;
+        if (nodeIds.size >= MAX_NODES) {
+          truncated = true;
+          continue;
+        }
+        nodeIds.add(neighbor);
+        nextFrontier.push(neighbor);
+      }
+    }
+    frontier = nextFrontier;
+  }
+
+  return { nodeIds, truncated };
+}
+
+/** Every non-rejected edge whose both endpoints are in the set, honoring filters. */
+function fetchEdgesAmong(
+  idList: number[],
+  types: EdgeType[] | undefined,
+  includeAi: boolean,
+): { edges: GraphEdge[]; truncated: boolean } {
+  if (idList.length === 0) return { edges: [], truncated: false };
+  const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
+  const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
+  const placeholders = idList.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT id, source_work_id, target_work_id, type, origin, status, confidence
+       FROM edges
+       WHERE status != 'rejected' ${aiClause} ${typeClause}
+         AND source_work_id IN (${placeholders}) AND target_work_id IN (${placeholders})
+       LIMIT ?`,
+    )
+    .all(...(types ?? []), ...idList, ...idList, MAX_EDGES + 1) as EdgeRow[];
+  return {
+    truncated: rows.length > MAX_EDGES,
+    edges: rows.slice(0, MAX_EDGES).map((e) => ({
+      id: e.id,
+      source_work_id: e.source_work_id,
+      target_work_id: e.target_work_id,
+      type: e.type,
+      origin: e.origin,
+      status: e.status,
+      confidence: e.confidence,
+    })),
+  };
+}
+
+const MAX_FOCUS = 50;
+
+/** Parse the focus=1,2,3 work-id list for the overview endpoint. */
+function parseFocusIds(raw: unknown): number[] | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+  const ids = raw.split(',').map((s) => Number(s.trim()));
+  if (ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+    throw validationError('focus must be a comma-separated list of positive integer work ids');
+  }
+  if (ids.length > MAX_FOCUS) {
+    throw validationError(`focus accepts at most ${MAX_FOCUS} work ids`);
+  }
+  return Array.from(new Set(ids));
+}
+
 // GET /api/graph — field-wide overview: the most-connected works and every edge
 // among them, so the whole uploaded corpus can be explored without picking a root.
+// With focus=<id,id,...> it instead shows just those works plus everything within
+// `depth` hops of them (0 = only the focused works), still honoring all filters.
 router.get(
   '/',
   wrapAsync(async (req, res) => {
     const { types, includeAi } = parseGraphFilters(req as { query: Record<string, unknown> });
+    const focusIds = parseFocusIds(req.query.focus);
+
+    if (focusIds) {
+      const depthParam = req.query.depth;
+      const depth = depthParam === undefined ? 1 : Number(depthParam);
+      if (!Number.isInteger(depth) || depth < 0 || depth > 3) {
+        throw validationError('depth must be an integer between 0 and 3');
+      }
+
+      // Silently drop focus ids that no longer exist (e.g. stale shared links).
+      const existing = fetchGraphNodes(focusIds).map((n) => n.id);
+      const { nodeIds, truncated: truncatedNodes } = collectNeighborhood(
+        existing,
+        depth,
+        'both',
+        types,
+        includeAi,
+      );
+      const idList = Array.from(nodeIds);
+      const { edges, truncated: truncatedEdges } = fetchEdgesAmong(idList, types, includeAi);
+
+      const response: GraphResponse = {
+        root_id: null,
+        nodes: fetchGraphNodes(idList),
+        edges,
+        truncated: truncatedNodes || truncatedEdges,
+      };
+      res.json(response);
+      return;
+    }
 
     const nodeRows = db
       .prepare(
@@ -64,34 +212,11 @@ router.get(
 
     const truncatedNodes = nodeRows.length > MAX_NODES;
     const nodes: GraphNode[] = nodeRows.slice(0, MAX_NODES);
-    const idList = nodes.map((n) => n.id);
-
-    let edges: GraphEdge[] = [];
-    let truncatedEdges = false;
-    if (idList.length > 0) {
-      const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
-      const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
-      const placeholders = idList.map(() => '?').join(',');
-      const rows = db
-        .prepare(
-          `SELECT id, source_work_id, target_work_id, type, origin, status, confidence
-           FROM edges
-           WHERE status != 'rejected' ${aiClause} ${typeClause}
-             AND source_work_id IN (${placeholders}) AND target_work_id IN (${placeholders})
-           LIMIT ?`,
-        )
-        .all(...(types ?? []), ...idList, ...idList, MAX_EDGES + 1) as EdgeRow[];
-      truncatedEdges = rows.length > MAX_EDGES;
-      edges = rows.slice(0, MAX_EDGES).map((e) => ({
-        id: e.id,
-        source_work_id: e.source_work_id,
-        target_work_id: e.target_work_id,
-        type: e.type,
-        origin: e.origin,
-        status: e.status,
-        confidence: e.confidence,
-      }));
-    }
+    const { edges, truncated: truncatedEdges } = fetchEdgesAmong(
+      nodes.map((n) => n.id),
+      types,
+      includeAi,
+    );
 
     const response: GraphResponse = {
       root_id: null,
@@ -141,84 +266,22 @@ router.get(
     const rootWork = db.prepare('SELECT id FROM works WHERE id = ?').get(rootId) as { id: number } | undefined;
     if (!rootWork) throw notFound('Work not found');
 
-    const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
-    const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
-    const baseClause = `status != 'rejected' ${aiClause} ${typeClause}`;
-
-    const outStmt = db.prepare(
-      `SELECT id, source_work_id, target_work_id, type, origin, status, confidence
-       FROM edges WHERE source_work_id = ? AND ${baseClause}`,
+    const { nodeIds, truncated: truncatedNodes } = collectNeighborhood(
+      [rootId],
+      depth,
+      direction,
+      types,
+      includeAi,
     );
-    const inStmt = db.prepare(
-      `SELECT id, source_work_id, target_work_id, type, origin, status, confidence
-       FROM edges WHERE target_work_id = ? AND ${baseClause}`,
-    );
-    const typeParams = types ?? [];
-
-    const nodeIds = new Set<number>([rootId]);
-    const edgesById = new Map<number, EdgeRow>();
-    let truncated = false;
-    let frontier: number[] = [rootId];
-
-    outer: for (let hop = 0; hop < depth; hop++) {
-      if (frontier.length === 0) break;
-      const nextFrontier: number[] = [];
-
-      for (const current of frontier) {
-        const rows: EdgeRow[] = [];
-        if (direction === 'descendants' || direction === 'both') {
-          rows.push(...(outStmt.all(current, ...typeParams) as EdgeRow[]));
-        }
-        if (direction === 'ancestors' || direction === 'both') {
-          rows.push(...(inStmt.all(current, ...typeParams) as EdgeRow[]));
-        }
-
-        for (const edge of rows) {
-          if (edgesById.has(edge.id)) continue;
-          const neighbor = edge.source_work_id === current ? edge.target_work_id : edge.source_work_id;
-          const neighborIsNew = !nodeIds.has(neighbor);
-
-          if (neighborIsNew && nodeIds.size >= MAX_NODES) {
-            truncated = true;
-            continue; // would exceed node cap; skip to avoid a dangling edge
-          }
-          if (edgesById.size >= MAX_EDGES) {
-            truncated = true;
-            break outer;
-          }
-
-          edgesById.set(edge.id, edge);
-          if (neighborIsNew) {
-            nodeIds.add(neighbor);
-            nextFrontier.push(neighbor);
-          }
-        }
-      }
-
-      frontier = nextFrontier;
-    }
-
     const idList = Array.from(nodeIds);
-    const nodes = db
-      .prepare(
-        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
-                (SELECT COUNT(*) FROM edges e
-                 WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
-         FROM works w WHERE w.id IN (${idList.map(() => '?').join(',')})`,
-      )
-      .all(...idList) as GraphNode[];
+    const { edges, truncated: truncatedEdges } = fetchEdgesAmong(idList, types, includeAi);
 
-    const edges: GraphEdge[] = Array.from(edgesById.values()).map((e) => ({
-      id: e.id,
-      source_work_id: e.source_work_id,
-      target_work_id: e.target_work_id,
-      type: e.type,
-      origin: e.origin,
-      status: e.status,
-      confidence: e.confidence,
-    }));
-
-    const response: GraphResponse = { root_id: rootId, nodes, edges, truncated };
+    const response: GraphResponse = {
+      root_id: rootId,
+      nodes: fetchGraphNodes(idList),
+      edges,
+      truncated: truncatedNodes || truncatedEdges,
+    };
     res.json(response);
   }),
 );

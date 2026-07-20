@@ -4,9 +4,16 @@
 // Without an :id (route /graph) it renders the field-wide overview instead:
 // the most-connected works in the corpus and every edge among them.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import cytoscape from 'cytoscape';
-import type { EdgeType, GraphDirection, GraphEdge, GraphNode, GraphResponse } from '@shared/types';
+import type {
+  EdgeType,
+  GraphDirection,
+  GraphEdge,
+  GraphNode,
+  GraphResponse,
+  SearchResponse,
+} from '@shared/types';
 import { EDGE_TYPES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import {
@@ -80,6 +87,71 @@ export default function GraphPage() {
   const [selectedTypes, setSelectedTypes] = useState<Set<EdgeType>>(new Set(EDGE_TYPES));
   const [includeAi, setIncludeAi] = useState(false);
 
+  // Focus mode (overview only): show just these works + their neighborhood.
+  // Lives in the URL so focused views are shareable and survive reloads.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusKey = isOverview ? (searchParams.get('focus') ?? '') : '';
+  const focusIds = useMemo(
+    () =>
+      focusKey
+        ? Array.from(
+            new Set(focusKey.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0)),
+          )
+        : [],
+    [focusKey],
+  );
+  const rawFocusDepth = Number(searchParams.get('fdepth') ?? '1');
+  const focusDepth = Number.isInteger(rawFocusDepth) && rawFocusDepth >= 0 && rawFocusDepth <= 3 ? rawFocusDepth : 1;
+
+  const [focusQuery, setFocusQuery] = useState('');
+  const [focusResults, setFocusResults] = useState<Array<{ id: number; title: string; year: number | null }> | null>(
+    null,
+  );
+  // Titles for chips of works not yet present in the fetched graph data.
+  const focusTitleCache = useRef(new Map<number, string>());
+
+  const updateFocus = (ids: number[], nextDepth: number) => {
+    const next = new URLSearchParams(searchParams);
+    if (ids.length > 0) {
+      next.set('focus', ids.join(','));
+      next.set('fdepth', String(nextDepth));
+    } else {
+      next.delete('focus');
+      next.delete('fdepth');
+    }
+    setSearchParams(next);
+  };
+  const addFocus = (workId: number, title: string) => {
+    focusTitleCache.current.set(workId, title);
+    if (!focusIds.includes(workId)) updateFocus([...focusIds, workId], focusDepth);
+    setFocusQuery('');
+    setFocusResults(null);
+  };
+  const removeFocus = (workId: number) => {
+    updateFocus(focusIds.filter((f) => f !== workId), focusDepth);
+  };
+
+  // Debounced typeahead against /api/search for the focus list.
+  useEffect(() => {
+    if (!isOverview) return;
+    const q = focusQuery.trim();
+    if (q.length < 2) {
+      setFocusResults(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      api
+        .get<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=8`)
+        .then((res) =>
+          setFocusResults(
+            res.items.map((i) => ({ id: i.work.id, title: i.work.title, year: i.work.publication_year })),
+          ),
+        )
+        .catch(() => setFocusResults([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [focusQuery, isOverview]);
+
   const [data, setData] = useState<GraphResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +175,9 @@ export default function GraphPage() {
     if (!isOverview) {
       params.set('depth', String(depth));
       params.set('direction', direction);
+    } else if (focusIds.length > 0) {
+      params.set('focus', focusIds.join(','));
+      params.set('depth', String(focusDepth));
     }
     params.set('include_ai', String(includeAi));
     if (selectedTypes.size < EDGE_TYPES.length) {
@@ -128,12 +203,14 @@ export default function GraphPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, depth, direction, includeAi, typesKey]);
+  }, [id, depth, direction, includeAi, typesKey, focusKey, focusDepth]);
 
   // Build/destroy the cytoscape instance whenever the fetched data changes.
   useEffect(() => {
     if (!containerRef.current || !data) return;
 
+    // Focused works get the same accent ring as a traversal root.
+    const focusSet = new Set(focusIds);
     const nodes = data.nodes.map((n) => ({
       data: {
         id: String(n.id),
@@ -141,7 +218,7 @@ export default function GraphPage() {
         fullTitle: n.title,
         tier: n.tier,
         resultNature: n.result_nature,
-        isRoot: n.id === data.root_id ? 'true' : 'false',
+        isRoot: n.id === data.root_id || focusSet.has(n.id) ? 'true' : 'false',
         degree: n.degree,
         size: nodeSize(n.degree),
       },
@@ -312,7 +389,8 @@ export default function GraphPage() {
       cy.destroy();
       cyRef.current = null;
     };
-  }, [data, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, navigate, focusKey]);
 
   const toggleType = (t: EdgeType) => {
     setSelectedTypes((prev) => {
@@ -347,13 +425,94 @@ export default function GraphPage() {
       <h1>{isOverview ? 'Field graph' : rootNode ? `Graph: ${rootNode.title}` : 'Work graph'}</h1>
       {isOverview ? (
         <p className="muted">
-          The whole uploaded corpus at a glance — the most-connected works and every typed edge among them.
-          Bigger nodes have more connections. Click a node to preview it; double-click to open the work.
+          {focusIds.length > 0
+            ? 'Focused view — the papers you picked plus their surrounding connections. Bigger nodes have more connections. Click a node to preview it; double-click to open the work.'
+            : 'The whole uploaded corpus at a glance — the most-connected works and every typed edge among them. Bigger nodes have more connections. Click a node to preview it; double-click to open the work.'}
         </p>
       ) : null}
 
       <div className="flex gap-5 items-start flex-wrap">
         <aside style={{ width: '15rem', flexShrink: 0 }} className="stack gap-4">
+          {isOverview ? (
+            <fieldset>
+              <legend>Focus</legend>
+              <div className="field">
+                <label htmlFor="focus-search">Add paper</label>
+                <input
+                  id="focus-search"
+                  type="search"
+                  placeholder="Search works…"
+                  value={focusQuery}
+                  onChange={(e) => setFocusQuery(e.target.value)}
+                  autoComplete="off"
+                />
+                {focusResults ? (
+                  <ul className="focus-search-results">
+                    {focusResults.length === 0 ? (
+                      <li className="focus-search-empty muted small">No matches</li>
+                    ) : (
+                      focusResults.map((r) => (
+                        <li key={r.id}>
+                          <button
+                            type="button"
+                            className="focus-search-result"
+                            disabled={focusIds.includes(r.id)}
+                            onClick={() => addFocus(r.id, r.title)}
+                          >
+                            {r.title}
+                            {r.year ? <span className="muted"> ({r.year})</span> : null}
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                ) : null}
+              </div>
+              {focusIds.length > 0 ? (
+                <>
+                  <ul className="focus-list">
+                    {focusIds.map((fid) => (
+                      <li key={fid} className="focus-list-item">
+                        <span className="focus-list-title">
+                          {nodeTitleById.get(fid) ?? focusTitleCache.current.get(fid) ?? `Work #${fid}`}
+                        </span>
+                        <button
+                          type="button"
+                          className="focus-list-remove"
+                          aria-label="Remove from focus"
+                          title="Remove from focus"
+                          onClick={() => removeFocus(fid)}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="field">
+                    <label htmlFor="focus-depth">Connections</label>
+                    <select
+                      id="focus-depth"
+                      value={focusDepth}
+                      onChange={(e) => updateFocus(focusIds, Number(e.target.value))}
+                    >
+                      <option value={0}>Selected papers only</option>
+                      <option value={1}>1 step away</option>
+                      <option value={2}>2 steps away</option>
+                      <option value={3}>3 steps away</option>
+                    </select>
+                  </div>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => updateFocus([], 1)}>
+                    Clear focus
+                  </button>
+                </>
+              ) : (
+                <p className="field-hint">
+                  Search and add papers to see only those works and their connections. Focused papers get a
+                  navy ring.
+                </p>
+              )}
+            </fieldset>
+          ) : null}
           <fieldset>
             <legend>{isOverview ? 'Filters' : 'Traversal'}</legend>
             {isOverview ? null : (
@@ -442,10 +601,14 @@ export default function GraphPage() {
             </div>
           ) : data && data.nodes.length === 0 ? (
             <div className="empty-state">
-              <p className="empty-state-title">{isOverview ? 'No works yet' : 'No connections found'}</p>
+              <p className="empty-state-title">
+                {isOverview ? (focusIds.length > 0 ? 'No focused works found' : 'No works yet') : 'No connections found'}
+              </p>
               <p className="empty-state-body">
                 {isOverview
-                  ? 'Nothing has been uploaded or imported yet — the graph will fill in as works arrive.'
+                  ? focusIds.length > 0
+                    ? 'None of the focused papers exist anymore — clear the focus list to see the field overview.'
+                    : 'Nothing has been uploaded or imported yet — the graph will fill in as works arrive.'
                   : 'This work has no connections matching the current filters.'}
               </p>
             </div>
@@ -504,6 +667,15 @@ export default function GraphPage() {
                   <Link className="btn btn-ghost btn-sm" to={`/works/${selectedNode.id}/graph`}>
                     Center graph here
                   </Link>
+                ) : null}
+                {isOverview && !focusIds.includes(selectedNode.id) ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => addFocus(selectedNode.id, selectedNode.title)}
+                  >
+                    Add to focus
+                  </button>
                 ) : null}
               </div>
             </div>

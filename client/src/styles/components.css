@@ -865,6 +865,86 @@ AI-suggested:
   color: var(--color-ai-strong);
 }
 
+/* Focus-mode typeahead results under the "Add paper" input. */
+.focus-search-results {
+  margin-top: var(--space-1);
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.focus-search-result {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  background: none;
+  border: 0;
+  border-bottom: var(--border-width-thin) solid var(--color-border);
+  cursor: pointer;
+}
+
+.focus-search-results li:last-child .focus-search-result {
+  border-bottom: 0;
+}
+
+.focus-search-result:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.focus-search-result:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.focus-search-empty {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Chips for works currently in the focus list. */
+.focus-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.focus-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  background: var(--color-bg);
+  border: var(--border-width-thin) solid var(--color-border);
+  border-left: var(--border-width-thick) solid var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+
+.focus-list-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.focus-list-remove {
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-base);
+  line-height: 1.2;
+  color: var(--color-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.focus-list-remove:hover {
+  color: var(--color-ink);
+}
+
 /* Zoom / fit button cluster overlaid on the graph canvas. */
 .graph-controls {
   position: absolute;
