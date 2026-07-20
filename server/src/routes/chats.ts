@@ -10,11 +10,13 @@
 
 import { Router } from 'express';
 import { db, nowIso } from '../db.js';
-import { wrapAsync, validationError, notFound, forbidden, invalidTransition } from '../lib/errors.js';
+import { wrapAsync, validationError, notFound, forbidden, invalidTransition, upstreamError } from '../lib/errors.js';
 import { requireAuth } from '../lib/auth.js';
 import { sha256Hex } from '../lib/hash.js';
 import { getWork } from '../services/workStore.js';
-import { matchChatToWorks } from '../services/chatMatcher.js';
+import { matchChatToWorks, detectExternalRefs } from '../services/chatMatcher.js';
+import { importDoi } from '../services/importers/crossref.js';
+import { importArxiv } from '../services/importers/arxiv.js';
 import { CHAT_PLATFORMS } from '../../../shared/types.js';
 import type {
   Chat,
@@ -58,8 +60,11 @@ function chatLinks(chatId: number): ChatLinkDetail[] {
     .all(chatId) as ChatLinkDetail[];
 }
 
-function chatDetail(row: ChatRow): ChatDetail {
-  return { ...row, links: chatLinks(row.id) };
+/** `forUploader` attaches the uploader-only list of importable external references. */
+function chatDetail(row: ChatRow, forUploader = false): ChatDetail {
+  const detail: ChatDetail = { ...row, links: chatLinks(row.id) };
+  if (forUploader) detail.external_refs = detectExternalRefs(row.transcript);
+  return detail;
 }
 
 /** Pending chats exist only for their uploader (404 for everyone else — don't leak). */
@@ -131,18 +136,22 @@ router.post(
       title = firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
     }
 
+    // Consent to spend the uploader's own Claude key on AI matching. Defaults false; when
+    // false the matcher uses the server-wide default provider, never the user's key.
+    const aiConsent = body.ai_consent === true;
+
     const info = db
       .prepare(
-        `INSERT INTO chats (url, platform, title, transcript, content_hash, uploaded_by)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO chats (url, platform, title, transcript, content_hash, uploaded_by, ai_consent)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(url, platform, title, transcript, sha256Hex(transcript), req.user!.id);
+      .run(url, platform, title, transcript, sha256Hex(transcript), req.user!.id, aiConsent ? 1 : 0);
     const chatId = Number(info.lastInsertRowid);
 
     // Matcher runs after the insert; a matcher failure must not lose the upload.
     let suggestions: Awaited<ReturnType<typeof matchChatToWorks>> = [];
     try {
-      suggestions = await matchChatToWorks(transcript);
+      suggestions = await matchChatToWorks(transcript, req.user!.id, aiConsent);
     } catch (err) {
       console.error('chat matcher failed:', err);
     }
@@ -154,7 +163,7 @@ router.post(
       insertLink.run(chatId, s.work_id, s.model, s.model_version, s.confidence, s.basis);
     }
 
-    res.status(201).json({ chat: chatDetail(getChatRow(chatId)!) });
+    res.status(201).json({ chat: chatDetail(getChatRow(chatId)!, true) });
   }),
 );
 
@@ -197,7 +206,8 @@ router.get(
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) throw validationError('id must be a positive integer');
     const chat = requireVisibleChat(id, req.user?.id ?? null, !!req.user?.is_admin);
-    res.json({ chat: chatDetail(chat) });
+    const forUploader = !!req.user && (chat.uploaded_by === req.user.id || !!req.user.is_admin);
+    res.json({ chat: chatDetail(chat, forUploader) });
   }),
 );
 
@@ -231,7 +241,7 @@ router.post(
       ).run(id, workId, req.user!.id, nowIso());
     }
 
-    res.status(201).json({ chat: chatDetail(chat) });
+    res.status(201).json({ chat: chatDetail(chat, true) });
   }),
 );
 
@@ -264,7 +274,7 @@ function resolveLink(action: 'confirm' | 'reject') {
       ).run(linkId);
     }
 
-    res.json({ chat: chatDetail(chat) });
+    res.json({ chat: chatDetail(chat, true) });
   });
 }
 router.post('/chats/:id/links/:linkId/confirm', requireAuth, resolveLink('confirm'));
@@ -293,7 +303,61 @@ router.post(
     }
 
     db.prepare(`UPDATE chats SET status = 'verified', verified_at = ? WHERE id = ?`).run(nowIso(), id);
-    res.json({ chat: chatDetail(getChatRow(id)!) });
+    res.json({ chat: chatDetail(getChatRow(id)!, true) });
+  }),
+);
+
+// POST /api/chats/:id/import-ref — uploader imports a referenced paper (DOI/arXiv detected in
+// the transcript but absent from the corpus) and links it to the chat. Human-in-the-loop:
+// only identifiers actually present in this chat's transcript can be imported this way, and
+// the resulting link is a confirmed human attachment.
+router.post(
+  '/chats/:id/import-ref',
+  requireAuth,
+  wrapAsync(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw validationError('id must be a positive integer');
+    const chat = requireVisibleChat(id, req.user!.id, !!req.user!.is_admin);
+    requireUploader(chat, req.user!.id);
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const kind = body.kind;
+    const refId = typeof body.id === 'string' ? body.id.trim() : '';
+    if ((kind !== 'doi' && kind !== 'arxiv') || !refId) {
+      throw validationError("kind must be 'doi' or 'arxiv' and id is required");
+    }
+    // Gate to references actually detected in this transcript — this endpoint isn't a general
+    // import backdoor; it only acts on what the chat itself cites.
+    const refs = detectExternalRefs(chat.transcript);
+    if (!refs.some((r) => r.kind === kind && r.id === refId)) {
+      throw validationError('That reference is not an importable citation in this conversation');
+    }
+
+    let workId: number;
+    try {
+      const result = kind === 'doi' ? await importDoi(refId) : await importArxiv(refId);
+      workId = result.work.id;
+    } catch (err) {
+      console.error('chat ref import failed:', err);
+      throw upstreamError(`Could not import ${kind.toUpperCase()} ${refId} from the source provider`);
+    }
+
+    // Attach as a confirmed human link (idempotent — re-importing just re-confirms).
+    const existing = db
+      .prepare('SELECT id FROM chat_links WHERE chat_id = ? AND work_id = ?')
+      .get(id, workId) as { id: number } | undefined;
+    if (existing) {
+      db.prepare(
+        `UPDATE chat_links SET status = 'confirmed', origin = 'human', confirmed_by = ?, confirmed_at = ? WHERE id = ?`,
+      ).run(req.user!.id, nowIso(), existing.id);
+    } else {
+      db.prepare(
+        `INSERT INTO chat_links (chat_id, work_id, origin, status, confirmed_by, confirmed_at)
+         VALUES (?, ?, 'human', 'confirmed', ?, ?)`,
+      ).run(id, workId, req.user!.id, nowIso());
+    }
+
+    res.status(201).json({ chat: chatDetail(chat, true) });
   }),
 );
 

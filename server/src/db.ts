@@ -16,6 +16,17 @@ db.pragma('foreign_keys = ON'); // must run every process start — not persiste
 const schema = readFileSync(path.join(dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+// Lightweight additive migrations. schema.sql is idempotent for *new* tables/indexes, but
+// `CREATE TABLE IF NOT EXISTS` does not add columns to a table that already exists — so a
+// new column on an existing table needs an explicit, idempotent ADD COLUMN here.
+function addColumnIfMissing(table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
+addColumnIfMissing('chats', 'ai_consent', "ai_consent INTEGER NOT NULL DEFAULT 0 CHECK (ai_consent IN (0,1))");
+
 export function nowIso(): string {
   return new Date().toISOString();
 }

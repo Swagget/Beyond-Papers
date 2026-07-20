@@ -9,6 +9,8 @@ import path from 'node:path';
 
 const PORT = 3777;
 const BASE = `http://localhost:${PORT}`;
+// 64 hex chars (32 bytes) — enables the per-user AI credential feature under test.
+const TEST_ENC_KEY = 'a'.repeat(64);
 const tmp = mkdtempSync(path.join(tmpdir(), 'bp-test-'));
 const dbPath = path.join(tmp, 'test.db');
 
@@ -55,7 +57,7 @@ async function waitForServer(timeoutMs = 30000): Promise<void> {
 async function main() {
   console.log('Starting server on temp DB…');
   server = spawn(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'server/src/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: dbPath, AI_PROVIDER: 'heuristic', NODE_ENV: 'test' },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: dbPath, AI_PROVIDER: 'heuristic', NODE_ENV: 'test', CREDENTIAL_ENC_KEY: TEST_ENC_KEY },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr?.on('data', (d) => process.stderr.write(`[server] ${d}`));
@@ -281,6 +283,59 @@ async function main() {
   check('public chat list = verified only', publicList.status === 200 &&
     (publicList.json?.items ?? []).every((c: any) => c.status === 'verified'));
 
+  // ---------- per-user AI credentials (bring-your-own key) ----------
+  console.log('\nAI credentials (bring-your-own key):');
+  // Crypto round-trip (direct lib test — no network, deterministic).
+  process.env.CREDENTIAL_ENC_KEY = TEST_ENC_KEY;
+  const { encryptSecret, decryptSecret } = await import('../server/src/lib/crypto.js');
+  const secret = 'sk-ant-roundtrip-secret-value-1234567890';
+  const sealed = encryptSecret(secret);
+  check('crypto: encrypt produces distinct ciphertext', sealed.ciphertext.length > 0 && !sealed.ciphertext.includes(secret));
+  check('crypto: decrypt round-trips', decryptSecret(sealed) === secret);
+  let tamperCaught = false;
+  try { decryptSecret({ ...sealed, auth_tag: 'f'.repeat(sealed.auth_tag.length) }); } catch { tamperCaught = true; }
+  check('crypto: GCM auth tag rejects tampering', tamperCaught);
+
+  const credAnon = await req('GET', '/api/me/ai-credentials');
+  check('credentials require auth (401)', credAnon.status === 401);
+  const credNone = await req('GET', '/api/me/ai-credentials', undefined, t2);
+  check('no key on file → present:false', credNone.status === 200 && credNone.json?.credential?.present === false);
+  const credBadShape = await req('PUT', '/api/me/ai-credentials', { api_key: 'not-a-key' }, t2);
+  check('malformed key → 400', credBadShape.status === 400);
+  const credBadProvider = await req('PUT', '/api/me/ai-credentials', { provider: 'openai', api_key: 'sk-ant-xxxxxxxxxxxxxxxxxxxxxx' }, t2);
+  check('non-anthropic provider → 400', credBadProvider.status === 400);
+  // A well-formed but fake key: Anthropic rejects it (or the network call fails) → validation 400,
+  // and nothing is persisted. Either outcome proves we never store an unverified key.
+  const credFake = await req('PUT', '/api/me/ai-credentials', { api_key: 'sk-ant-fake0000000000000000000000000000' }, t2);
+  check('unverifiable key rejected → 400', credFake.status === 400);
+  const stillNone = await req('GET', '/api/me/ai-credentials', undefined, t2);
+  check('rejected key not stored', stillNone.json?.credential?.present === false);
+  const credDelNoop = await req('DELETE', '/api/me/ai-credentials', undefined, t2);
+  check('delete with no key → 204 (idempotent)', credDelNoop.status === 204);
+
+  // ---------- chat consent + external references (Phase 3/4) ----------
+  console.log('\nChat AI-consent & external references:');
+  // A transcript citing a DOI/arXiv id not in the corpus. cId's DOI is null, so use fresh ids.
+  const refTx =
+    'User: How does the routing idea in arXiv:2401.55555 compare to the method in 10.1234/not-in-corpus-xyz?\n' +
+    'Assistant: Both concern sparse attention routing but differ in how they gate tokens across heads and layers.';
+  const refChat = await req('POST', '/api/chats', { transcript: refTx, ai_consent: false }, t1);
+  const refChatId = refChat.json?.chat?.id;
+  check('upload without consent still 201', refChat.status === 201);
+  const refs: any[] = refChat.json?.chat?.external_refs ?? [];
+  check('external_refs detects uncorpus DOI + arXiv id', refs.some((r) => r.kind === 'doi' && r.id === '10.1234/not-in-corpus-xyz') && refs.some((r) => r.kind === 'arxiv' && r.id === '2401.55555'),
+    `got ${JSON.stringify(refs)}`);
+  const refAnon = await req('GET', `/api/chats/${refChatId}`, undefined, t2);
+  check('external_refs hidden from non-uploader', refAnon.status === 404 || refAnon.json?.chat?.external_refs === undefined);
+  const badRef = await req('POST', `/api/chats/${refChatId}/import-ref`, { kind: 'doi', id: '10.9999/not-in-this-chat' }, t1);
+  check('import-ref rejects id not cited in chat → 400', badRef.status === 400, `got ${badRef.status}`);
+  const badKind = await req('POST', `/api/chats/${refChatId}/import-ref`, { kind: 'pubmed', id: '123' }, t1);
+  check('import-ref bad kind → 400', badKind.status === 400);
+  const refByOther = await req('POST', `/api/chats/${refChatId}/import-ref`, { kind: 'arxiv', id: '2401.55555' }, t2);
+  check('import-ref by non-uploader → 403/404', refByOther.status === 403 || refByOther.status === 404);
+  // Note: the happy-path import hits live Crossref/arXiv; asserting on network here would be flaky,
+  // so we verify only the guard rails. The importer + link insertion are exercised in isolation elsewhere.
+
   // ---------- graph overview ----------
   console.log('\nGraph overview:');
   const overview = await req('GET', '/api/graph');
@@ -288,6 +343,17 @@ async function main() {
     overview.json?.root_id === null && Array.isArray(overview.json?.nodes) && Array.isArray(overview.json?.edges) && overview.json.nodes.length > 0);
   const overviewBadType = await req('GET', '/api/graph?types=bogus');
   check('overview bad edge type → 400', overviewBadType.status === 400);
+
+  // ---------- bookmarklet generator (ToS-safe one-click capture) ----------
+  console.log('\nBookmarklet (one-click capture):');
+  const { bookmarkletSource, bookmarkletHref } = await import('../client/src/lib/bookmarklet.js');
+  const src = bookmarkletSource('https://beyond.example');
+  check('bookmarklet bakes in the app origin', src.includes('"https://beyond.example"'));
+  check('bookmarklet detects all three platforms', /claude/.test(src) && /chatgpt/.test(src) && /gemini/.test(src));
+  check('bookmarklet uses postMessage handshake', src.includes('beyond-papers-ready') && src.includes('beyond-papers-chat'));
+  check('bookmarklet posts payload to our exact origin (not *)', src.includes('w.postMessage(payload,O)'));
+  const hrefBm = bookmarkletHref('https://beyond.example');
+  check('href is a javascript: URL, encoded', hrefBm.startsWith('javascript:') && hrefBm.includes('%'));
 
   // ---------- summary ----------
   console.log(`\n=== ${passed} passed, ${failed} failed ===`);

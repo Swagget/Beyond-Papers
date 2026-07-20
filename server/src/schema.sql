@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS chats (
   content_hash TEXT NOT NULL,       -- sha256 hex of the transcript
   uploaded_by  INTEGER NOT NULL REFERENCES users(id),
   status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','verified')),
+  ai_consent   INTEGER NOT NULL DEFAULT 0 CHECK (ai_consent IN (0,1)),  -- uploader OK'd spending their own AI key
   verified_at  TEXT,
   created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -264,6 +265,26 @@ CREATE TABLE IF NOT EXISTS chat_links (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_links_chat ON chat_links(chat_id);
 CREATE INDEX IF NOT EXISTS idx_chat_links_work ON chat_links(work_id, status);
+
+-- ============================================================
+-- PER-USER AI CREDENTIALS (bring-your-own Claude API key)
+-- The key itself is never stored in plaintext: ciphertext/iv/auth_tag are
+-- AES-256-GCM, keyed by the server's CREDENTIAL_ENC_KEY (see lib/crypto.ts).
+-- Only last4 (for display) and validation state live in the clear.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_ai_credentials (
+  user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  provider     TEXT NOT NULL DEFAULT 'anthropic' CHECK (provider IN ('anthropic')),
+  ciphertext   TEXT NOT NULL,   -- hex, AES-256-GCM of the API key
+  iv           TEXT NOT NULL,   -- hex, 12-byte GCM nonce
+  auth_tag     TEXT NOT NULL,   -- hex, 16-byte GCM tag
+  last4        TEXT NOT NULL,   -- last 4 chars of the key, for UI ("…a1b2")
+  status       TEXT NOT NULL DEFAULT 'unvalidated' CHECK (status IN ('valid','invalid','unvalidated')),
+  validated_at TEXT,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 -- ============================================================
 -- FULL-TEXT SEARCH (§8)

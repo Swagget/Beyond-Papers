@@ -17,6 +17,7 @@ import exportRouter from './routes/export.js';
 import graphRouter from './routes/graph.js';
 import flagsRouter from './routes/flags.js';
 import chatsRouter from './routes/chats.js';
+import credentialsRouter from './routes/credentials.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/search', searchRouter);
 app.use('/api/import', importRouter);
 app.use('/api/graph', graphRouter);
 app.use('/api/flags', flagsRouter);
+app.use('/api/me', credentialsRouter);
 app.use('/api', chatsRouter); // /chats ..., /works/:id/chats — before worksRouter so /works/:id/chats wins
 app.use('/api', exportRouter); // /works/:id/export/*, /versions/:hash — before worksRouter so export wins
 app.use('/api', worksRouter); // /works ...

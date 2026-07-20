@@ -62,6 +62,18 @@ export type ChatLinkStatus = 'suggested' | 'confirmed' | 'rejected';
 
 export type AiProviderName = 'anthropic' | 'heuristic';
 
+// Per-user bring-your-own AI credential. The key itself is never sent to the client;
+// only this status view is. `status` reflects the last live validation against the provider.
+export type AiCredentialProvider = 'anthropic';
+export type AiCredentialState = 'valid' | 'invalid' | 'unvalidated';
+export interface AiCredentialStatus {
+  provider: AiCredentialProvider;
+  present: boolean;
+  last4: string | null;
+  status: AiCredentialState;
+  validated_at: string | null;
+}
+
 // ---------- License → tier mapping (must match server/src/lib/license.ts) ----------
 
 export function licenseToTier(license: LicenseId): Tier {
@@ -325,8 +337,18 @@ export interface ChatLinkDetail extends ChatLink {
   work_kind: WorkKind;
 }
 
+/** A paper referenced in a chat (by DOI or arXiv id) that is not yet in the corpus.
+ *  The uploader can import+link it in one click; once imported it leaves this list and
+ *  appears as a confirmed link instead. Only ever populated for the uploader/admin. */
+export interface ExternalRef {
+  kind: 'doi' | 'arxiv';
+  id: string;
+}
+
 export interface ChatDetail extends Chat {
   links: ChatLinkDetail[];
+  /** Pending importable references — uploader-visible only; omitted for other viewers. */
+  external_refs?: ExternalRef[];
 }
 
 /** A verified chat as shown on a work page, with the confirming link. */

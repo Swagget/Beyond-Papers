@@ -86,6 +86,8 @@ export default function ChatPage() {
   const rejectLink = (l: ChatLinkDetail) =>
     void act(() => api.post(`/api/chats/${chatId}/links/${l.id}/reject`), l.id);
   const attachWork = (workId: number) => void act(() => api.post(`/api/chats/${chatId}/links`, { work_id: workId }));
+  const importRef = (kind: 'doi' | 'arxiv', refId: string) =>
+    void act(() => api.post(`/api/chats/${chatId}/import-ref`, { kind, id: refId }));
   const verify = () => void act(() => api.post(`/api/chats/${chatId}/verify`));
 
   async function remove() {
@@ -241,6 +243,35 @@ export default function ChatPage() {
           </div>
         )}
       </section>
+
+      {/* ---------- Referenced papers not yet in the corpus ---------- */}
+      {isUploader && chat.external_refs && chat.external_refs.length > 0 ? (
+        <section className="stack gap-3">
+          <h2 style={{ fontSize: 'var(--font-size-lg)' }}>
+            Referenced papers not in the corpus ({chat.external_refs.length})
+          </h2>
+          <p className="small muted">
+            These DOIs / arXiv ids appear in the conversation but aren&rsquo;t in Beyond Papers yet. Import one
+            to pull in its metadata and attach it to this chat.
+          </p>
+          <div className="stack gap-2">
+            {chat.external_refs.map((r) => (
+              <div key={`${r.kind}:${r.id}`} className="row gap-2 items-center flex-wrap">
+                <button
+                  className="btn btn-primary btn-sm"
+                  type="button"
+                  disabled={busyLinkId !== null}
+                  onClick={() => importRef(r.kind, r.id)}
+                >
+                  Import &amp; link
+                </button>
+                <span className="badge">{r.kind === 'doi' ? 'DOI' : 'arXiv'}</span>
+                <code className="small">{r.id}</code>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {/* ---------- Manual attach ---------- */}
       {isUploader ? (

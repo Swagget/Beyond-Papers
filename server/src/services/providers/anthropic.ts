@@ -24,10 +24,15 @@ interface AnthropicMessagesResponse {
   content?: AnthropicContentBlock[];
 }
 
-async function callAnthropic(system: string, prompt: string, maxTokens: 1024 | 2048): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  // Defense in depth: aiProvider.ts already fails fast at module load if this is missing
-  // when AI_PROVIDER=anthropic, so this branch should be unreachable in practice.
+async function callAnthropic(
+  apiKey: string | undefined,
+  system: string,
+  prompt: string,
+  maxTokens: 1024 | 2048,
+): Promise<string | null> {
+  // Key is injected: the server-wide env key (default construction) or a per-user
+  // bring-your-own key (getAiProviderForUser). aiProvider.ts fails fast at boot for the
+  // env case, so a missing key here means a user-key path with nothing usable — degrade.
   if (!apiKey) return null;
 
   try {
@@ -74,6 +79,9 @@ function scopedContent(
 }
 
 export class AnthropicProvider implements AiProvider {
+  /** apiKey defaults to the server-wide env key; pass a per-user key to bill that user. */
+  constructor(private readonly apiKey: string | undefined = process.env.ANTHROPIC_API_KEY) {}
+
   async suggestEdges(work: WorkDetail, candidates: WorkSummary[]): Promise<SuggestedEdge[]> {
     // §5 enforcement: suggest-edges always uses {title, abstract} only, regardless of tier.
     const list = candidates.slice(0, 20);
@@ -92,7 +100,7 @@ export class AnthropicProvider implements AiProvider {
       `<one of ${JSON.stringify(EDGE_TYPES)}>, "confidence": <number 0..1>, "basis": <short string>}. Only ` +
       'include candidates with a genuine relationship. If none, respond with [].';
 
-    const raw = await callAnthropic(system, prompt, 1024);
+    const raw = await callAnthropic(this.apiKey, system, prompt, 1024);
     if (!raw) return [];
     try {
       const parsed: unknown = JSON.parse(extractJsonText(raw));
@@ -139,7 +147,7 @@ export class AnthropicProvider implements AiProvider {
       'conversation touches this work>}. Only include works the conversation genuinely engages with — a ' +
       'passing keyword overlap is not enough. If none, respond with [].';
 
-    const raw = await callAnthropic(system, prompt, 1024);
+    const raw = await callAnthropic(this.apiKey, system, prompt, 1024);
     if (!raw) return [];
     try {
       const parsed: unknown = JSON.parse(extractJsonText(raw));
@@ -175,7 +183,7 @@ export class AnthropicProvider implements AiProvider {
       (content.sections ? `\nSections:\n${content.sections}` : '') +
       '\n\nWrite a concise, accurate 3-6 sentence summary.';
 
-    const raw = await callAnthropic(system, prompt, scope === 'full' ? 2048 : 1024);
+    const raw = await callAnthropic(this.apiKey, system, prompt, scope === 'full' ? 2048 : 1024);
     if (!raw) return FALLBACK_SUMMARY;
     try {
       const parsed = JSON.parse(extractJsonText(raw)) as { summary?: unknown };
@@ -195,7 +203,7 @@ export class AnthropicProvider implements AiProvider {
       (content.sections ? `\nSections:\n${content.sections}` : '') +
       '\n\nList the key technical terms with brief, accurate definitions.';
 
-    const raw = await callAnthropic(system, prompt, scope === 'full' ? 2048 : 1024);
+    const raw = await callAnthropic(this.apiKey, system, prompt, scope === 'full' ? 2048 : 1024);
     if (!raw) return [];
     try {
       const parsed = JSON.parse(extractJsonText(raw)) as { terms?: unknown };
@@ -238,7 +246,7 @@ export class AnthropicProvider implements AiProvider {
       (subunit ? `\nFocused sub-unit (${subunit.type}): ${subunit.content}` : '') +
       `\n\nReader question: ${question}`;
 
-    const raw = await callAnthropic(system, prompt, 1024);
+    const raw = await callAnthropic(this.apiKey, system, prompt, 1024);
     if (!raw) return FALLBACK_EXPLAIN;
     try {
       const parsed = JSON.parse(extractJsonText(raw)) as { answer?: unknown };

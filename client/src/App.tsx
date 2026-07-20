@@ -21,6 +21,7 @@ import VersionPage from './pages/VersionPage';
 import FlagsPage from './pages/FlagsPage';
 import ChatsPage from './pages/ChatsPage';
 import ChatUploadPage from './pages/ChatUploadPage';
+import ChatImportPage from './pages/ChatImportPage';
 import ChatPage from './pages/ChatPage';
 
 export default function App() {
@@ -53,6 +54,7 @@ export default function App() {
           />
           <Route path="/chats" element={<ChatsPage />} />
           <Route path="/chats/new" element={<ChatUploadPage />} />
+          <Route path="/chats/import" element={<ChatImportPage />} />
           <Route path="/chats/:id" element={<ChatPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/users/:id" element={<ProfilePage />} />

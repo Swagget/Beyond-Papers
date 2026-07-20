@@ -6,9 +6,9 @@
 //      (heuristic TF-IDF or Anthropic) to judge which ones the conversation discusses.
 
 import { db } from '../db.js';
-import { getAiProvider, getAiProviderName, MODEL_INFO } from './aiProvider.js';
+import { getAiProviderForUser, MODEL_INFO } from './aiProvider.js';
 import { toSummary } from './workStore.js';
-import type { Work, WorkSummary } from '../../../shared/types.js';
+import type { ExternalRef, Work, WorkSummary } from '../../../shared/types.js';
 
 /** Cap on transcript text forwarded to the AI provider — never the raw upload. */
 export const EXCERPT_CHARS = 20_000;
@@ -86,8 +86,50 @@ function ftsCandidates(transcript: string, excludeIds: Set<number>): WorkSummary
   return rows.filter((w) => !excludeIds.has(w.id)).slice(0, MAX_CANDIDATES).map(toSummary);
 }
 
-/** Runs both lanes over a transcript. Identifier matches win on overlap. */
-export async function matchChatToWorks(transcript: string): Promise<ChatSuggestion[]> {
+/**
+ * Papers referenced in the transcript (by DOI or arXiv id) that are NOT yet in the corpus.
+ * Deterministic and offline — the raw identifiers are already in the text. The uploader can
+ * import+link these in one click; after import the identifier is in `works` and drops out.
+ */
+export function detectExternalRefs(transcript: string): ExternalRef[] {
+  const refs: ExternalRef[] = [];
+
+  const dois = extractDois(transcript);
+  if (dois.length > 0) {
+    const present = new Set(
+      (db.prepare(`SELECT doi FROM works WHERE doi IN (${dois.map(() => '?').join(',')})`).all(...dois) as {
+        doi: string;
+      }[]).map((r) => r.doi),
+    );
+    for (const doi of dois) if (!present.has(doi)) refs.push({ kind: 'doi', id: doi });
+  }
+
+  const arxivIds = extractArxivIds(transcript);
+  if (arxivIds.length > 0) {
+    const present = new Set(
+      (
+        db.prepare(`SELECT arxiv_id FROM works WHERE arxiv_id IN (${arxivIds.map(() => '?').join(',')})`).all(
+          ...arxivIds,
+        ) as { arxiv_id: string }[]
+      ).map((r) => r.arxiv_id),
+    );
+    for (const id of arxivIds) if (!present.has(id)) refs.push({ kind: 'arxiv', id });
+  }
+
+  return refs;
+}
+
+/**
+ * Runs both lanes over a transcript. Identifier matches win on overlap.
+ * `uploaderId` + `useUserKey` select the AI provider: when the uploader consented to spend
+ * their own Claude key (and has one), it is used (billed to them, real AI even when the
+ * server default is heuristic). Otherwise the server-wide default provider handles the AI lane.
+ */
+export async function matchChatToWorks(
+  transcript: string,
+  uploaderId?: number | null,
+  useUserKey = false,
+): Promise<ChatSuggestion[]> {
   const suggestions: ChatSuggestion[] = [];
   const matchedIds = new Set<number>();
 
@@ -127,8 +169,8 @@ export async function matchChatToWorks(transcript: string): Promise<ChatSuggesti
   const candidates = ftsCandidates(transcript, matchedIds);
   if (candidates.length > 0) {
     const excerpt = transcript.slice(0, EXCERPT_CHARS);
-    const provider = getAiProvider();
-    const info = MODEL_INFO[getAiProviderName()];
+    const { provider, name } = await getAiProviderForUser(useUserKey ? uploaderId : null);
+    const info = MODEL_INFO[name];
     const matches = await provider.matchChat(excerpt, candidates);
     for (const m of matches) {
       if (matchedIds.has(m.work_id)) continue;

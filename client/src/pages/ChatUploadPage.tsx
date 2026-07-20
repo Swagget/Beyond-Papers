@@ -1,24 +1,52 @@
-// Upload an AI conversation: paste a share link + the transcript. The server runs
-// the matcher and returns AI-suggested work attachments, which the uploader then
-// reviews on the chat page — nothing is public until they verify (§4.1–4.2 pattern).
+// Upload an AI conversation. Two ways in:
+//   1. Manual: paste a share link + the transcript text.
+//   2. One-click: the bookmarklet (see BookmarkletHint) captures the open conversation in
+//      the user's own browser and hands it to this same form pre-filled for review.
+// Either way the server runs the matcher and returns AI-suggested work attachments, which
+// the uploader reviews on the chat page — nothing is public until they verify (§4.1–4.2).
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ChatDetail, ChatPlatform } from '@shared/types';
+import type { AiCredentialStatus, ChatDetail, ChatPlatform } from '@shared/types';
 import { CHAT_PLATFORMS } from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import { useAuth } from '../auth';
+import BookmarkletHint from '../components/BookmarkletHint';
 
-export default function ChatUploadPage() {
+export interface ChatUploadInitial {
+  title?: string;
+  url?: string;
+  platform?: ChatPlatform | '';
+  transcript?: string;
+}
+
+export default function ChatUploadPage({
+  initial,
+  captured = false,
+}: {
+  initial?: ChatUploadInitial;
+  captured?: boolean;
+}) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [title, setTitle] = useState('');
-  const [url, setUrl] = useState('');
-  const [platform, setPlatform] = useState<ChatPlatform | ''>('');
-  const [transcript, setTranscript] = useState('');
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [url, setUrl] = useState(initial?.url ?? '');
+  const [platform, setPlatform] = useState<ChatPlatform | ''>(initial?.platform ?? '');
+  const [transcript, setTranscript] = useState(initial?.transcript ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Only offer the "spend my key" consent when the user actually has a validated key.
+  const [hasKey, setHasKey] = useState(false);
+  const [aiConsent, setAiConsent] = useState(true);
+  useEffect(() => {
+    if (!user) return;
+    api
+      .get<{ credential: AiCredentialStatus }>('/api/me/ai-credentials')
+      .then((r) => setHasKey(r.credential.present && r.credential.status === 'valid'))
+      .catch(() => setHasKey(false));
+  }, [user]);
 
   if (!user) {
     return (
@@ -42,6 +70,7 @@ export default function ChatUploadPage() {
         url: url.trim() || undefined,
         platform: platform || undefined,
         transcript,
+        ai_consent: hasKey ? aiConsent : undefined,
       });
       navigate(`/chats/${res.chat.id}`);
     } catch (err) {
@@ -53,14 +82,22 @@ export default function ChatUploadPage() {
   return (
     <div className="stack gap-5" style={{ maxWidth: '46rem' }}>
       <div className="stack gap-2">
-        <h1>Upload a conversation</h1>
-        <p className="muted">
-          Paste a chat you had with an AI (Claude, ChatGPT, Gemini, …). The platform reads the transcript and
-          suggests which research works it relates to — <strong>you</strong> then confirm or reject each
-          suggestion before anything becomes public. Share links can&rsquo;t be fetched automatically, so paste
-          the conversation text itself below.
-        </p>
+        <h1>{captured ? 'Review captured conversation' : 'Upload a conversation'}</h1>
+        {captured ? (
+          <p className="muted">
+            Captured from your browser. Review the transcript below and submit — the platform will then suggest
+            which research works it relates to, and <strong>you</strong> confirm each before anything is public.
+          </p>
+        ) : (
+          <p className="muted">
+            Paste a chat you had with an AI (Claude, ChatGPT, Gemini, …). The platform reads the transcript and
+            suggests which research works it relates to — <strong>you</strong> then confirm or reject each
+            suggestion before anything becomes public.
+          </p>
+        )}
       </div>
+
+      {!captured ? <BookmarkletHint /> : null}
 
       <form className="stack gap-3" onSubmit={(e) => void submit(e)} aria-label="Upload a conversation">
         <div className="field">
@@ -115,6 +152,28 @@ export default function ChatUploadPage() {
             matched by the AI layer and clearly labeled as such.
           </p>
         </div>
+        {hasKey ? (
+          <div className="field">
+            <label className="row items-center gap-2" htmlFor="chat-ai-consent">
+              <input
+                id="chat-ai-consent"
+                type="checkbox"
+                checked={aiConsent}
+                onChange={(e) => setAiConsent(e.target.checked)}
+              />
+              Use my Claude key to find related works
+            </label>
+            <p className="field-hint">
+              Runs the AI match on your own Anthropic account (uses your credits). Uncheck to use the
+              platform&rsquo;s default matcher instead. DOI/arXiv references are matched either way.
+            </p>
+          </div>
+        ) : (
+          <p className="field-hint">
+            Want AI-powered matching on your own Claude account?{' '}
+            <Link to="/settings">Add your API key in settings</Link>.
+          </p>
+        )}
         {error ? (
           <p className="small" style={{ color: 'var(--color-danger)' }}>
             {error}

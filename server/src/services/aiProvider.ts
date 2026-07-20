@@ -74,3 +74,32 @@ export function getAiProvider(): AiProvider {
 export function getAiProviderName(): AiProviderName {
   return PROVIDER_NAME;
 }
+
+/**
+ * Provider to use for work done on a specific user's behalf. Precedence:
+ *   1. the user's own stored+decryptable Claude key  → real Anthropic, billed to them
+ *   2. otherwise the server-wide default provider     → getAiProvider()
+ *
+ * Note (1) works even when the server default is 'heuristic': a user bringing their own
+ * key gets real AI regardless of how the server itself is configured. Returns the name
+ * too so callers stamp the correct MODEL_INFO provenance.
+ *
+ * Kept as a lazy `import()` so this module has no static dependency on the DB/crypto
+ * layers (preserving the boot-time import graph and the fail-fast contract above).
+ */
+export async function getAiProviderForUser(
+  userId: number | null | undefined,
+): Promise<{ provider: AiProvider; name: AiProviderName }> {
+  if (userId != null) {
+    try {
+      const { getUserApiKey } = await import('./credentialStore.js');
+      const key = getUserApiKey(userId);
+      if (key) {
+        return { provider: new AnthropicProvider(key), name: 'anthropic' };
+      }
+    } catch {
+      // Credential lookup/decrypt failed — fall through to the server default.
+    }
+  }
+  return { provider: getAiProvider(), name: getAiProviderName() };
+}

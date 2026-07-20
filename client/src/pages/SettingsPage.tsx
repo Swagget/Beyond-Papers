@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { User } from '@shared/types';
 import { useAuth } from '../auth';
 import { api, ApiRequestError } from '../api';
+import AiCredentialSection from '../components/AiCredentialSection';
 
 const ORCID_PATTERN = /^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/;
 
@@ -146,6 +147,9 @@ export default function SettingsPage() {
           {saving ? 'Saving…' : 'Save changes'}
         </button>
       </form>
+
+      <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: 0 }} />
+      <AiCredentialSection />
     </div>
   );
 }
