@@ -6,10 +6,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import cytoscape from 'cytoscape';
-import type { EdgeType, GraphDirection, GraphEdge, GraphResponse } from '@shared/types';
+import type { EdgeType, GraphDirection, GraphEdge, GraphNode, GraphResponse } from '@shared/types';
 import { EDGE_TYPES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
-import { AiBadge, EdgeTypeBadge, EdgeStatusBadge, ConfidencePct } from '../components/Badges';
+import {
+  AiBadge,
+  EdgeTypeBadge,
+  EdgeStatusBadge,
+  ConfidencePct,
+  KindBadge,
+  ResultBadge,
+  TierBadge,
+} from '../components/Badges';
 
 // Hard-coded from client/src/styles/tokens.css — cytoscape cannot read CSS
 // custom properties, so these hex values must be kept in sync by hand.
@@ -43,7 +51,21 @@ const COLOR_AI_BORDER = '#9a6fdb'; // --color-ai-border
 const COLOR_BORDER_STRONG = '#c9c1a9'; // --color-border-strong (default edge fallback)
 
 function truncateTitle(title: string): string {
-  return title.length > 40 ? `${title.slice(0, 40)}…` : title;
+  return title.length > 48 ? `${title.slice(0, 48)}…` : title;
+}
+
+// Connected-Papers-style size encoding: diameter grows with the square root of
+// the node's corpus-wide connection count, so hubs stand out without dwarfing leaves.
+function nodeSize(degree: number): number {
+  return Math.min(64, 22 + Math.sqrt(Math.max(0, degree)) * 7);
+}
+
+// Degree above which a node keeps its label when zoomed out (top quartile).
+// Small graphs keep every label at every zoom level.
+function labelThreshold(degrees: number[]): number {
+  if (degrees.length <= 25) return -Infinity;
+  const sorted = [...degrees].sort((a, b) => b - a);
+  return sorted[Math.floor(sorted.length * 0.25)];
 }
 
 export default function GraphPage() {
@@ -62,6 +84,8 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphEdge | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hoverTip, setHoverTip] = useState<{ x: number; y: number; title: string } | null>(null);
 
   const typesKey = useMemo(() => Array.from(selectedTypes).sort().join(','), [selectedTypes]);
 
@@ -90,6 +114,7 @@ export default function GraphPage() {
         if (cancelled) return;
         setData(res);
         setSelectedEdge(null);
+        setSelectedNode(null);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -113,11 +138,15 @@ export default function GraphPage() {
       data: {
         id: String(n.id),
         label: truncateTitle(n.title),
+        fullTitle: n.title,
         tier: n.tier,
         resultNature: n.result_nature,
         isRoot: n.id === data.root_id ? 'true' : 'false',
+        degree: n.degree,
+        size: nodeSize(n.degree),
       },
     }));
+    const minLabelDegree = labelThreshold(data.nodes.map((n) => n.degree));
     const edges = data.edges.map((e) => ({
       data: {
         id: `e${e.id}`,
@@ -144,14 +173,19 @@ export default function GraphPage() {
             'border-width': 2,
             'border-color': COLOR_BORDER_STRONG,
             label: 'data(label)',
-            'font-size': 11,
+            'font-size': 12,
             color: COLOR_INK,
             'text-wrap': 'wrap',
-            'text-max-width': '100px',
+            'text-max-width': '120px',
             'text-valign': 'bottom',
             'text-margin-y': 6,
-            width: 28,
-            height: 28,
+            // Halo behind labels so text stays readable over crossing edges.
+            'text-background-color': COLOR_SURFACE,
+            'text-background-opacity': 0.85,
+            'text-background-padding': '2px',
+            'text-background-shape': 'roundrectangle',
+            width: 'data(size)',
+            height: 'data(size)',
           },
         },
         { selector: 'node[tier = "A"]', style: { 'border-color': TIER_BORDER_HEX.A } },
@@ -187,24 +221,94 @@ export default function GraphPage() {
             'target-arrow-color': COLOR_AI_BORDER,
           },
         },
+        // Hover focus: dim everything outside the hovered node's neighborhood.
+        { selector: '.dimmed', style: { opacity: 0.15 } },
+        { selector: 'node.hovered', style: { 'border-width': 3 } },
+        { selector: 'edge.hl', style: { width: 3 } },
+        {
+          selector: 'node.selected-node',
+          style: { 'border-width': 4, 'border-color': COLOR_ACCENT },
+        },
+        {
+          selector: 'node.label-hidden',
+          style: { 'text-opacity': 0, 'text-background-opacity': 0 },
+        },
       ],
       layout: { name: 'cose', animate: false },
     });
 
+    // Zoomed out, only hub labels stay — declutters dense graphs; zooming in reveals the rest.
+    const applyLabelVisibility = () => {
+      const revealAll = cy.zoom() >= 0.65;
+      cy.nodes().forEach((node) => {
+        const hide =
+          !revealAll && node.data('isRoot') !== 'true' && (node.data('degree') as number) < minLabelDegree;
+        node.toggleClass('label-hidden', hide);
+      });
+    };
+    cy.on('zoom', applyLabelVisibility);
+    applyLabelVisibility();
+
     cy.on('tap', 'node', (evt) => {
+      const nid = Number(evt.target.id());
+      setSelectedNode(data.nodes.find((n) => n.id === nid) ?? null);
+      setSelectedEdge(null);
+      cy.nodes().removeClass('selected-node');
+      evt.target.addClass('selected-node');
+    });
+    cy.on('dbltap', 'node', (evt) => {
       navigate(`/works/${evt.target.id()}`);
     });
     cy.on('tap', 'edge', (evt) => {
       const edgeId = Number(String(evt.target.id()).slice(1));
       const edge = data.edges.find((e) => e.id === edgeId) ?? null;
       setSelectedEdge(edge);
+      setSelectedNode(null);
+      cy.nodes().removeClass('selected-node');
     });
     cy.on('tap', (evt) => {
-      if (evt.target === cy) setSelectedEdge(null);
+      if (evt.target === cy) {
+        setSelectedEdge(null);
+        setSelectedNode(null);
+        cy.nodes().removeClass('selected-node');
+      }
     });
+
+    cy.on('mouseover', 'node', (evt) => {
+      const node = evt.target;
+      const hood = node.closedNeighborhood();
+      cy.elements().difference(hood).addClass('dimmed');
+      hood.edges().addClass('hl');
+      node.addClass('hovered');
+      const pos = node.renderedPosition();
+      setHoverTip({
+        x: pos.x,
+        y: pos.y - (node.renderedHeight() as number) / 2 - 8,
+        title: node.data('fullTitle') as string,
+      });
+      if (containerRef.current) containerRef.current.style.cursor = 'pointer';
+    });
+    cy.on('mouseout', 'node', (evt) => {
+      cy.elements().removeClass('dimmed hl');
+      evt.target.removeClass('hovered');
+      setHoverTip(null);
+      if (containerRef.current) containerRef.current.style.cursor = '';
+    });
+    cy.on('pan zoom drag', () => setHoverTip(null));
+
+    // Leaving the canvas quickly can skip cytoscape's node mouseout — reset hover state.
+    const container = containerRef.current;
+    const clearHover = () => {
+      cy.elements().removeClass('dimmed hl');
+      cy.nodes().removeClass('hovered');
+      setHoverTip(null);
+      if (container) container.style.cursor = '';
+    };
+    container.addEventListener('mouseleave', clearHover);
 
     cyRef.current = cy;
     return () => {
+      container.removeEventListener('mouseleave', clearHover);
       cy.destroy();
       cyRef.current = null;
     };
@@ -217,6 +321,18 @@ export default function GraphPage() {
       else next.add(t);
       return next;
     });
+  };
+
+  const zoomBy = (factor: number) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.zoom({
+      level: cy.zoom() * factor,
+      renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+    });
+  };
+  const fitGraph = () => {
+    cyRef.current?.fit(undefined, 30);
   };
 
   const rootNode = data?.nodes.find((n) => n.id === data.root_id) ?? null;
@@ -232,7 +348,7 @@ export default function GraphPage() {
       {isOverview ? (
         <p className="muted">
           The whole uploaded corpus at a glance — the most-connected works and every typed edge among them.
-          Click a node to open the work.
+          Bigger nodes have more connections. Click a node to preview it; double-click to open the work.
         </p>
       ) : null}
 
@@ -334,19 +450,64 @@ export default function GraphPage() {
               </p>
             </div>
           ) : (
-            <div
-              ref={containerRef}
-              role="img"
-              aria-label="Graph visualization of this work's connections"
-              style={{
-                width: '100%',
-                height: '70vh',
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-lg)',
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <div
+                ref={containerRef}
+                role="img"
+                aria-label="Graph visualization of this work's connections"
+                style={{
+                  width: '100%',
+                  height: '70vh',
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-lg)',
+                }}
+              />
+              <div className="graph-controls">
+                <button type="button" onClick={() => zoomBy(1.3)} aria-label="Zoom in" title="Zoom in">
+                  +
+                </button>
+                <button type="button" onClick={() => zoomBy(1 / 1.3)} aria-label="Zoom out" title="Zoom out">
+                  −
+                </button>
+                <button type="button" onClick={fitGraph} aria-label="Fit graph to view" title="Fit to view">
+                  ⛶
+                </button>
+              </div>
+              {hoverTip ? (
+                <div className="graph-node-tooltip" style={{ left: hoverTip.x, top: hoverTip.y }}>
+                  {hoverTip.title}
+                </div>
+              ) : null}
+            </div>
           )}
+
+          {selectedNode ? (
+            <div className="graph-node-panel">
+              <div className="row gap-2 items-center flex-wrap">
+                <KindBadge kind={selectedNode.kind} />
+                <TierBadge tier={selectedNode.tier} />
+                <ResultBadge nature={selectedNode.result_nature} />
+              </div>
+              <h3 className="graph-node-panel-title">
+                <Link to={`/works/${selectedNode.id}`}>{selectedNode.title}</Link>
+              </h3>
+              <p className="muted small" style={{ margin: 0 }}>
+                {selectedNode.publication_year ? `${selectedNode.publication_year} · ` : ''}
+                {selectedNode.degree} connection{selectedNode.degree === 1 ? '' : 's'}
+              </p>
+              <div className="row gap-2">
+                <Link className="btn btn-primary btn-sm" to={`/works/${selectedNode.id}`}>
+                  Open work
+                </Link>
+                {selectedNode.id !== data?.root_id ? (
+                  <Link className="btn btn-ghost btn-sm" to={`/works/${selectedNode.id}/graph`}>
+                    Center graph here
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {selectedEdge ? (
             <div className="edge-item edge-item-human" style={{ borderLeftStyle: 'solid' }}>
@@ -385,6 +546,9 @@ export default function GraphPage() {
           </ul>
           <p className="field-hint">
             Solid = human-verified / confirmed. Dashed = <AiBadge label="AI-suggested" />, unconfirmed.
+          </p>
+          <p className="field-hint">
+            Node size reflects how many connections a work has across the corpus.
           </p>
         </div>
       </div>

@@ -36,12 +36,19 @@ const TIER_OPTIONS: Array<{ value: Tier | ''; label: string }> = [
   { value: 'C', label: 'Tier C' },
 ];
 
+const SORT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Best match' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'year', label: 'Publication year' },
+];
+
 export default function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const q = searchParams.get('q') ?? '';
   const kind = searchParams.get('kind') ?? '';
   const resultNature = searchParams.get('result_nature') ?? '';
   const tier = searchParams.get('tier') ?? '';
+  const sort = searchParams.get('sort') ?? '';
   const offset = Math.max(0, Number(searchParams.get('offset') ?? '0') || 0);
 
   const [data, setData] = useState<SearchResponse | null>(null);
@@ -58,6 +65,7 @@ export default function HomePage() {
     if (kind) params.set('kind', kind);
     if (resultNature) params.set('result_nature', resultNature);
     if (tier) params.set('tier', tier);
+    if (sort) params.set('sort', sort);
     params.set('limit', String(LIMIT));
     params.set('offset', String(offset));
 
@@ -77,9 +85,9 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [q, kind, resultNature, tier, offset]);
+  }, [q, kind, resultNature, tier, sort, offset]);
 
-  const updateFilter = (key: 'kind' | 'result_nature' | 'tier', value: string) => {
+  const updateFilter = (key: 'kind' | 'result_nature' | 'tier' | 'sort', value: string) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value);
     else next.delete(key);
@@ -150,6 +158,16 @@ export default function HomePage() {
           <label htmlFor="filter-tier">License tier</label>
           <select id="filter-tier" value={tier} onChange={(e) => updateFilter('tier', e.target.value)}>
             {TIER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="filter-sort">Sort by</label>
+          <select id="filter-sort" value={sort} onChange={(e) => updateFilter('sort', e.target.value)}>
+            {SORT_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

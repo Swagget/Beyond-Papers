@@ -1,7 +1,7 @@
 // GET /api/search — spec §8, §13.8. Public, no auth.
 import { Router } from 'express';
 import { db } from '../db.js';
-import { wrapAsync } from '../lib/errors.js';
+import { validationError, wrapAsync } from '../lib/errors.js';
 import { scoreWorks, WEIGHTS, type ScorableWork } from '../services/ranking.js';
 import type { SearchResponse } from '../../../shared/types.js';
 
@@ -31,6 +31,10 @@ router.get(
     const tier = typeof req.query.tier === 'string' ? req.query.tier : undefined;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const offset = Math.max(0, Number(req.query.offset) || 0);
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : 'relevance';
+    if (sort !== 'relevance' && sort !== 'newest' && sort !== 'year') {
+      throw validationError("sort must be one of 'relevance', 'newest', 'year'");
+    }
 
     const filters: string[] = [];
     const filterParams: unknown[] = [];
@@ -90,6 +94,15 @@ router.get(
     }
 
     const scored = scoreWorks(candidateRows);
+    // Non-relevance sorts reorder within the ranked candidate pool (MAX_CANDIDATES cap
+    // applies as usual); score components stay attached for transparency.
+    if (sort === 'newest') {
+      scored.sort((a, b) => b.work.created_at.localeCompare(a.work.created_at));
+    } else if (sort === 'year') {
+      scored.sort(
+        (a, b) => (b.work.publication_year ?? Number.NEGATIVE_INFINITY) - (a.work.publication_year ?? Number.NEGATIVE_INFINITY),
+      );
+    }
     const items = scored.slice(offset, offset + limit);
 
     const response: SearchResponse = { items, total, limit, offset, weights: WEIGHTS };

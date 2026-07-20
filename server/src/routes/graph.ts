@@ -53,19 +53,17 @@ router.get(
 
     const nodeRows = db
       .prepare(
-        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier,
+        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
                 (SELECT COUNT(*) FROM edges e
                  WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
          FROM works w
          ORDER BY degree DESC, w.created_at DESC
          LIMIT ?`,
       )
-      .all(MAX_NODES + 1) as (GraphNode & { degree: number })[];
+      .all(MAX_NODES + 1) as GraphNode[];
 
     const truncatedNodes = nodeRows.length > MAX_NODES;
-    const nodes: GraphNode[] = nodeRows
-      .slice(0, MAX_NODES)
-      .map(({ degree: _degree, ...n }) => n);
+    const nodes: GraphNode[] = nodeRows.slice(0, MAX_NODES);
     const idList = nodes.map((n) => n.id);
 
     let edges: GraphEdge[] = [];
@@ -203,7 +201,10 @@ router.get(
     const idList = Array.from(nodeIds);
     const nodes = db
       .prepare(
-        `SELECT id, kind, title, result_nature, tier FROM works WHERE id IN (${idList.map(() => '?').join(',')})`,
+        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
+                (SELECT COUNT(*) FROM edges e
+                 WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
+         FROM works w WHERE w.id IN (${idList.map(() => '?').join(',')})`,
       )
       .all(...idList) as GraphNode[];
 

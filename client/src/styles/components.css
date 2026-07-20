@@ -865,6 +865,72 @@ AI-suggested:
   color: var(--color-ai-strong);
 }
 
+/* Zoom / fit button cluster overlaid on the graph canvas. */
+.graph-controls {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  z-index: 2;
+}
+
+.graph-controls button {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.graph-controls button:hover {
+  background: var(--color-bg);
+}
+
+/* Full-title tooltip shown when hovering a graph node. */
+.graph-node-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  max-width: 20rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-ink);
+  color: var(--color-surface);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Preview card for the currently selected graph node. */
+.graph-node-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: var(--border-width-thin) solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.graph-node-panel-title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  line-height: 1.35;
+}
+
 /* =========================================================================
    TABS
    ========================================================================= */

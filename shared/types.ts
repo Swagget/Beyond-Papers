@@ -386,6 +386,9 @@ export interface GraphNode {
   title: string;
   result_nature: ResultNature;
   tier: Tier;
+  publication_year: number | null;
+  /** Count of non-rejected edges touching this work across the whole corpus. */
+  degree: number;
 }
 
 export interface GraphEdge {
