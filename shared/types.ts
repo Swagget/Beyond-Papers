@@ -421,6 +421,29 @@ export interface Paginated<T> {
 export interface ImportResult {
   work: WorkDetail;
   created: boolean;   // false when deduped onto an existing work
+  neighborhood?: NeighborhoodSummary; // present when imported with_connections
+}
+
+/** A paper found on an external source (OpenAlex) that may not be in the corpus yet. */
+export interface ExternalSearchHit {
+  openalex_id: string;             // normalized bare Wxxxx
+  doi: string | null;
+  title: string;
+  publication_year: number | null;
+  authors: string[];               // display names, first few
+  cited_by_count: number;
+  existing_work_id: number | null; // non-null => already in corpus (exact external-id match)
+}
+
+export interface ExternalSearchResponse {
+  items: ExternalSearchHit[];
+}
+
+/** Outcome of a one-hop citation-neighborhood import (§ with_connections). */
+export interface NeighborhoodSummary {
+  imported: number;        // neighbors newly created
+  linked_existing: number; // neighbors that dedup-matched existing works
+  edges_created: number;   // cites edges inserted (incl. edges to pre-existing works)
 }
 
 export interface ApiError {

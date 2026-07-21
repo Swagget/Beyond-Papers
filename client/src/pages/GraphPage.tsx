@@ -8,14 +8,18 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import cytoscape from 'cytoscape';
 import type {
   EdgeType,
+  ExternalSearchHit,
+  ExternalSearchResponse,
   GraphDirection,
   GraphEdge,
   GraphNode,
   GraphResponse,
+  ImportResult,
   SearchResponse,
 } from '@shared/types';
 import { EDGE_TYPES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
+import ExternalHitRow from '../components/ExternalHitRow';
 import {
   AiBadge,
   EdgeTypeBadge,
@@ -107,6 +111,10 @@ export default function GraphPage() {
   const [focusResults, setFocusResults] = useState<Array<{ id: number; title: string; year: number | null }> | null>(
     null,
   );
+  // Papers found on OpenAlex that can be imported (with connections) on the fly.
+  const [externalResults, setExternalResults] = useState<ExternalSearchHit[] | null>(null);
+  const [withConnections, setWithConnections] = useState(true);
+  const [importSummary, setImportSummary] = useState<string | null>(null);
   // Titles for chips of works not yet present in the fetched graph data.
   const focusTitleCache = useRef(new Map<number, string>());
 
@@ -126,31 +134,63 @@ export default function GraphPage() {
     if (!focusIds.includes(workId)) updateFocus([...focusIds, workId], focusDepth);
     setFocusQuery('');
     setFocusResults(null);
+    setExternalResults(null);
   };
   const removeFocus = (workId: number) => {
     updateFocus(focusIds.filter((f) => f !== workId), focusDepth);
   };
 
-  // Debounced typeahead against /api/search for the focus list.
+  // Debounced typeahead: corpus works via /api/search, plus not-yet-imported
+  // papers via /api/external/search (OpenAlex) once the query is substantial.
   useEffect(() => {
     if (!isOverview) return;
     const q = focusQuery.trim();
     if (q.length < 2) {
       setFocusResults(null);
+      setExternalResults(null);
       return;
     }
+    let cancelled = false;
     const timer = setTimeout(() => {
       api
         .get<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=8`)
-        .then((res) =>
+        .then((res) => {
+          if (cancelled) return;
           setFocusResults(
             res.items.map((i) => ({ id: i.work.id, title: i.work.title, year: i.work.publication_year })),
-          ),
-        )
-        .catch(() => setFocusResults([]));
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setFocusResults([]);
+        });
+      if (q.length >= 3) {
+        api
+          .get<ExternalSearchResponse>(`/api/external/search?q=${encodeURIComponent(q)}&limit=5`)
+          .then((res) => {
+            if (!cancelled) setExternalResults(res.items);
+          })
+          .catch(() => {
+            if (!cancelled) setExternalResults(null);
+          });
+      } else {
+        setExternalResults(null);
+      }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [focusQuery, isOverview]);
+
+  const handleImported = (result: ImportResult) => {
+    const n = result.neighborhood;
+    setImportSummary(
+      n
+        ? `Imported "${result.work.title}" with ${n.imported} new connected paper${n.imported === 1 ? '' : 's'} (${n.edges_created} citation edges).`
+        : `Imported "${result.work.title}".`,
+    );
+    addFocus(result.work.id, result.work.title);
+  };
 
   const [data, setData] = useState<GraphResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -446,26 +486,69 @@ export default function GraphPage() {
                   onChange={(e) => setFocusQuery(e.target.value)}
                   autoComplete="off"
                 />
-                {focusResults ? (
+                {focusResults || externalResults ? (
                   <ul className="focus-search-results">
-                    {focusResults.length === 0 ? (
-                      <li className="focus-search-empty muted small">No matches</li>
-                    ) : (
-                      focusResults.map((r) => (
-                        <li key={r.id}>
-                          <button
-                            type="button"
-                            className="focus-search-result"
-                            disabled={focusIds.includes(r.id)}
-                            onClick={() => addFocus(r.id, r.title)}
-                          >
-                            {r.title}
-                            {r.year ? <span className="muted"> ({r.year})</span> : null}
-                          </button>
-                        </li>
-                      ))
-                    )}
+                    {focusResults && focusResults.length > 0 ? (
+                      <>
+                        <li className="focus-search-section muted small">In corpus</li>
+                        {focusResults.map((r) => (
+                          <li key={r.id}>
+                            <button
+                              type="button"
+                              className="focus-search-result"
+                              disabled={focusIds.includes(r.id)}
+                              onClick={() => addFocus(r.id, r.title)}
+                            >
+                              {r.title}
+                              {r.year ? <span className="muted"> ({r.year})</span> : null}
+                            </button>
+                          </li>
+                        ))}
+                      </>
+                    ) : null}
+                    {(() => {
+                      const corpusIds = new Set((focusResults ?? []).map((r) => r.id));
+                      const external = (externalResults ?? []).filter(
+                        (h) => h.existing_work_id === null || !corpusIds.has(h.existing_work_id),
+                      );
+                      if (external.length === 0) {
+                        return focusResults && focusResults.length === 0 ? (
+                          <li className="focus-search-empty muted small">No matches</li>
+                        ) : null;
+                      }
+                      return (
+                        <>
+                          <li className="focus-search-section muted small">
+                            <span>From OpenAlex</span>
+                            <label className="row gap-1 items-center" style={{ fontWeight: 'normal' }}>
+                              <input
+                                type="checkbox"
+                                checked={withConnections}
+                                onChange={(e) => setWithConnections(e.target.checked)}
+                              />
+                              with connections
+                            </label>
+                          </li>
+                          {external.map((h) => (
+                            <li key={h.openalex_id} className="focus-search-external">
+                              <ExternalHitRow
+                                hit={h}
+                                withConnections={withConnections}
+                                onImported={handleImported}
+                                onOpenExisting={addFocus}
+                                existingActionLabel="Add to focus"
+                              />
+                            </li>
+                          ))}
+                        </>
+                      );
+                    })()}
                   </ul>
+                ) : null}
+                {importSummary ? (
+                  <p className="small" style={{ color: 'var(--color-success)', marginTop: 'var(--space-1)' }}>
+                    {importSummary}
+                  </p>
                 ) : null}
               </div>
               {focusIds.length > 0 ? (

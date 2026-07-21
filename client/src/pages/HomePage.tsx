@@ -4,10 +4,18 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { ResultNature, SearchResponse, Tier, WorkKind } from '@shared/types';
+import type {
+  ExternalSearchHit,
+  ExternalSearchResponse,
+  ResultNature,
+  SearchResponse,
+  Tier,
+  WorkKind,
+} from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import WorkCard from '../components/WorkCard';
 import RankingExplain from '../components/RankingExplain';
+import ExternalHitRow from '../components/ExternalHitRow';
 
 const LIMIT = 20;
 
@@ -54,6 +62,35 @@ export default function HomePage() {
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // External (OpenAlex) results for papers not yet in the corpus — independent
+  // of the corpus search so a slow/failed OpenAlex call never blocks results.
+  const [externalHits, setExternalHits] = useState<ExternalSearchHit[] | null>(null);
+  const [externalLoading, setExternalLoading] = useState(false);
+  const [withConnections, setWithConnections] = useState(true);
+
+  useEffect(() => {
+    if (!q) {
+      setExternalHits(null);
+      return;
+    }
+    let cancelled = false;
+    setExternalLoading(true);
+    api
+      .get<ExternalSearchResponse>(`/api/external/search?q=${encodeURIComponent(q)}&limit=10`)
+      .then((res) => {
+        if (!cancelled) setExternalHits(res.items);
+      })
+      .catch(() => {
+        if (!cancelled) setExternalHits(null); // external search is best-effort
+      })
+      .finally(() => {
+        if (!cancelled) setExternalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [q]);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,6 +270,39 @@ export default function HomePage() {
           </nav>
         </>
       )}
+
+      {q && (externalLoading || (externalHits && externalHits.length > 0)) ? (
+        <section className="stack gap-3" aria-label="External search results">
+          <div className="row justify-between items-center flex-wrap gap-2">
+            <h2 style={{ margin: 0 }}>Also on OpenAlex</h2>
+            <label className="row gap-2 items-center small">
+              <input
+                type="checkbox"
+                checked={withConnections}
+                onChange={(e) => setWithConnections(e.target.checked)}
+              />
+              import with connections (cited + citing papers)
+            </label>
+          </div>
+          {externalLoading ? (
+            <div className="card">
+              <div className="skeleton skeleton-title" />
+              <div className="skeleton skeleton-text" style={{ width: '60%' }} />
+            </div>
+          ) : (
+            <div className="stack gap-2">
+              {externalHits!.map((h) => (
+                <ExternalHitRow
+                  key={h.openalex_id}
+                  hit={h}
+                  withConnections={withConnections}
+                  className="external-hit-card"
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

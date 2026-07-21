@@ -905,6 +905,57 @@ AI-suggested:
   padding: var(--space-2) var(--space-3);
 }
 
+/* Section headers inside the focus-search dropdown (In corpus / From OpenAlex). */
+.focus-search-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg);
+  border-bottom: var(--border-width-thin) solid var(--color-border);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--font-size-xs, 0.72rem);
+}
+
+.focus-search-external {
+  border-bottom: var(--border-width-thin) solid var(--color-border);
+}
+
+.focus-search-results li:last-child.focus-search-external {
+  border-bottom: 0;
+}
+
+/* One external (OpenAlex) hit with its import action. */
+.external-hit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.external-hit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.external-hit-title {
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+/* Standalone variant used outside the dropdown (home search page). */
+.external-hit-card {
+  border: var(--border-width-thin) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
 /* Chips for works currently in the focus list. */
 .focus-list {
   display: flex;

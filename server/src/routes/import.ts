@@ -3,7 +3,7 @@ import { wrapAsync, validationError } from '../lib/errors.js';
 import { requireAuth } from '../lib/auth.js';
 import { importDoi } from '../services/importers/crossref.js';
 import { importArxiv } from '../services/importers/arxiv.js';
-import { importOpenalexWork, importOpenalexBatch } from '../services/importers/openalex.js';
+import { importOpenalexWork, importOpenalexBatch, importOpenalexWithConnections } from '../services/importers/openalex.js';
 
 // Mounted at /api/import (index.ts). All routes require auth (spec §13.9).
 const router = Router();
@@ -38,7 +38,7 @@ router.post(
   '/openalex',
   requireAuth,
   wrapAsync(async (req, res) => {
-    const { openalex_id: openalexId, query, limit } = req.body ?? {};
+    const { openalex_id: openalexId, query, limit, with_connections: withConnections } = req.body ?? {};
     const hasId = typeof openalexId === 'string' && openalexId.trim().length > 0;
     const hasQuery = typeof query === 'string' && query.trim().length > 0;
 
@@ -47,9 +47,17 @@ router.post(
       // (and the two modes are mutually exclusive).
       throw validationError('Provide exactly one of openalex_id or query');
     }
+    if (withConnections !== undefined && typeof withConnections !== 'boolean') {
+      throw validationError('with_connections must be a boolean');
+    }
+    if (withConnections && !hasId) {
+      throw validationError('with_connections requires openalex_id');
+    }
 
     if (hasId) {
-      const result = await importOpenalexWork(openalexId.trim());
+      const result = withConnections
+        ? await importOpenalexWithConnections(openalexId.trim(), req.user!.id)
+        : await importOpenalexWork(openalexId.trim());
       res.status(result.created ? 201 : 200).json(result);
       return;
     }
