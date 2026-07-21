@@ -34,6 +34,7 @@ interface OpenalexWork {
   doi?: string | null;
   display_name?: string;
   title?: string;
+  type?: string | null;   // OpenAlex work type, e.g. 'article', 'preprint'
   publication_year?: number | null;
   primary_location?: { license?: string | null } | null;
   authorships?: OpenalexAuthorship[];
@@ -118,6 +119,7 @@ export function importFromRaw(raw: OpenalexWork): OpenalexImportResult {
   const work = createWork({
     kind: 'paper',
     source: 'openalex',
+    publication_status: raw.type === 'preprint' ? 'preprint' : 'published',
     created_by: null,
     title: mapped.title,
     abstract: mapped.abstract,

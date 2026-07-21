@@ -3,10 +3,16 @@
 
 // ---------- Enums ----------
 
-export type WorkKind = 'paper' | 'review' | 'replication' | 'concept' | 'dataset' | 'code';
+export type WorkKind = 'paper' | 'review' | 'replication' | 'concept' | 'dataset' | 'code' | 'blog';
 export type ResultNature = 'positive' | 'negative' | 'null' | 'inconclusive' | 'na';
 export type EditingMode = 'authored' | 'communal';
-export type WorkSource = 'native' | 'openalex' | 'crossref' | 'arxiv' | 'pubmed';
+export type WorkSource = 'native' | 'openalex' | 'crossref' | 'arxiv' | 'pubmed' | 'web';
+
+/** Formal publication standing of a work — orthogonal to kind.
+ *  published = peer-reviewed/formally published venue; preprint = e.g. arXiv-only;
+ *  informal = blogs, native platform works, other non-venue outputs. */
+export type PublicationStatus = 'published' | 'preprint' | 'informal';
+export const PUBLICATION_STATUSES: PublicationStatus[] = ['published', 'preprint', 'informal'];
 
 export type LicenseId =
   | 'cc-by' | 'cc-by-sa' | 'cc0' | 'public-domain' | 'platform-cc-by-sa'   // Tier C
@@ -141,8 +147,15 @@ export interface Work {
   arxiv_id: string | null;
   openalex_id: string | null;
   source: WorkSource;
+  /** Canonical URL for web-native works (kind 'blog'); null for papers. Display form, post-redirect. */
+  url: string | null;
+  /** Normalized dedup key for url (host+path, tracking params stripped). */
+  url_normalized: string | null;
+  /** Venue/site display name for web-native works, e.g. "Transformer Circuits". */
+  site_name: string | null;
   license: LicenseId;
   tier: Tier;
+  publication_status: PublicationStatus;
   publication_year: number | null;
   current_version_id: number | null;
   created_by: number | null;
@@ -386,6 +399,7 @@ export interface GraphNode {
   title: string;
   result_nature: ResultNature;
   tier: Tier;
+  publication_status: PublicationStatus;
   publication_year: number | null;
   /** Count of non-rejected edges touching this work across the whole corpus. */
   degree: number;
@@ -444,6 +458,29 @@ export interface NeighborhoodSummary {
   imported: number;        // neighbors newly created
   linked_existing: number; // neighbors that dedup-matched existing works
   edges_created: number;   // cites edges inserted (incl. edges to pre-existing works)
+}
+
+/** Metadata extracted from a fetched web page — best-effort, user-editable before save. */
+export interface UrlPreviewExtracted {
+  title: string | null;
+  authors: string[];
+  publication_year: number | null;
+  site_name: string | null;
+  abstract: string | null;
+  license: LicenseId;
+  doi: string | null;
+  arxiv_id: string | null;
+}
+
+/** Result of POST /api/import/url/preview. 'blocked'/'error' are not failures —
+ *  the client switches to manual entry and the work can still be created. */
+export interface UrlPreviewResponse {
+  fetch_status: 'ok' | 'blocked' | 'error';
+  url: string;              // final URL after redirects (or input URL if never fetched)
+  normalized_url: string;
+  existing_work_id: number | null;
+  extracted: UrlPreviewExtracted | null;
+  message?: string;
 }
 
 export interface ApiError {

@@ -2,7 +2,7 @@
 // Every page renders license tiers, AI provenance, result nature and edge
 // types through these, so the visual language never drifts.
 
-import type { EdgeStatus, EdgeType, ResultNature, Tier, WorkKind } from '@shared/types';
+import type { EdgeStatus, EdgeType, PublicationStatus, ResultNature, Tier, WorkKind } from '@shared/types';
 
 const TIER_LABEL: Record<Tier, string> = {
   A: 'Tier A — metadata',
@@ -46,11 +46,23 @@ const KIND_LABEL: Record<WorkKind, string> = {
   concept: 'Concept',
   dataset: 'Dataset',
   code: 'Code',
+  blog: 'Blog',
 };
 
 export function KindBadge({ kind }: { kind: WorkKind }) {
   if (kind === 'paper') return null; // papers are the unmarked default
   return <span className="badge">{KIND_LABEL[kind]}</span>;
+}
+
+const PUBLICATION_STATUS_LABEL: Record<PublicationStatus, string> = {
+  published: 'Published',
+  preprint: 'Preprint',
+  informal: 'Informal',
+};
+
+export function PublicationStatusBadge({ status }: { status: PublicationStatus }) {
+  if (status === 'published') return null; // published is the unmarked default
+  return <span className={`badge badge-pubstatus-${status}`}>{PUBLICATION_STATUS_LABEL[status]}</span>;
 }
 
 export function ConfidencePct({ confidence }: { confidence: number | null }) {

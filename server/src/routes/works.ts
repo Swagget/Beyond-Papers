@@ -18,11 +18,13 @@ import type { AuthorshipInput } from '../services/workStore.js';
 import {
   CREDIT_ROLES,
   SUBUNIT_TYPES,
+  PUBLICATION_STATUSES,
 } from '../../../shared/types.js';
 import type {
   Authorship,
   CreditRole,
   LicenseId,
+  PublicationStatus,
   Reference,
   ResultNature,
   EditingMode,
@@ -37,7 +39,7 @@ import type {
 
 const router = Router();
 
-const WORK_KINDS: WorkKind[] = ['paper', 'review', 'replication', 'concept', 'dataset', 'code'];
+const WORK_KINDS: WorkKind[] = ['paper', 'review', 'replication', 'concept', 'dataset', 'code', 'blog'];
 const RESULT_NATURES: ResultNature[] = ['positive', 'negative', 'null', 'inconclusive', 'na'];
 const EDITING_MODES: EditingMode[] = ['authored', 'communal'];
 
@@ -141,6 +143,9 @@ router.post(
     if (body.abstract !== undefined && body.abstract !== null && typeof body.abstract !== 'string') {
       throw validationError('abstract must be a string or null');
     }
+    if (body.publication_status !== undefined && !PUBLICATION_STATUSES.includes(body.publication_status)) {
+      throw validationError(`publication_status must be one of ${PUBLICATION_STATUSES.join(', ')}`);
+    }
 
     const sections = body.sections !== undefined ? validateSections(body.sections) : [];
     const references = body.references !== undefined ? validateReferences(body.references) : [];
@@ -159,6 +164,8 @@ router.post(
       references,
       license: body.license as LicenseId,
       source: 'native',
+      // Native works default to 'informal' — they have not undergone external formal publication.
+      publication_status: (body.publication_status as PublicationStatus | undefined) ?? 'informal',
       created_by: req.user!.id,
       authors,
     });
@@ -172,13 +179,17 @@ router.post(
 router.get(
   '/works',
   wrapAsync(async (req, res) => {
-    const { kind, result_nature, tier, source, editing, q, sort } = req.query;
+    const { kind, result_nature, tier, source, editing, publication_status, q, sort } = req.query;
     const conditions: string[] = [];
     const params: unknown[] = [];
 
     if (typeof kind === 'string') {
       conditions.push('works.kind = ?');
       params.push(kind);
+    }
+    if (typeof publication_status === 'string') {
+      conditions.push('works.publication_status = ?');
+      params.push(publication_status);
     }
     if (typeof result_nature === 'string') {
       conditions.push('works.result_nature = ?');
@@ -258,6 +269,20 @@ router.patch(
 
     const body = req.body ?? {};
 
+    // publication_status is work-level metadata (like tier), not versioned content — it can
+    // change alone, without a new version, so change_note is only required for content edits.
+    if (body.publication_status !== undefined && !PUBLICATION_STATUSES.includes(body.publication_status)) {
+      throw validationError(`publication_status must be one of ${PUBLICATION_STATUSES.join(', ')}`);
+    }
+    const contentKeys = ['title', 'abstract', 'sections', 'references', 'license'] as const;
+    const hasContentEdit = contentKeys.some((k) => body[k] !== undefined);
+    if (body.publication_status !== undefined && !hasContentEdit) {
+      db.prepare(`UPDATE works SET publication_status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+        .run(body.publication_status, id);
+      res.json({ work: getWorkDetail(id)! });
+      return;
+    }
+
     if (typeof body.change_note !== 'string' || body.change_note.trim().length === 0) {
       throw validationError('change_note is required');
     }
@@ -282,7 +307,7 @@ router.patch(
       throw conflict('cannot downgrade below tier C while subunits exist');
     }
 
-    const updated = addVersion(id, {
+    let updated = addVersion(id, {
       title: body.title,
       abstract: body.abstract,
       sections,
@@ -291,6 +316,11 @@ router.patch(
       change_note: body.change_note,
       created_by: req.user!.id,
     });
+
+    if (body.publication_status !== undefined) {
+      db.prepare(`UPDATE works SET publication_status = ? WHERE id = ?`).run(body.publication_status, id);
+      updated = getWorkDetail(id)!;
+    }
 
     res.json({ work: updated });
   }),

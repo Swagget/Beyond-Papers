@@ -39,6 +39,34 @@ export function normalizeTitle(input: string): string {
     .trim();
 }
 
+/** Tracking params dropped from URLs before dedup — content-significant params are kept. */
+const TRACKING_PARAM_RE = /^(utm_|fbclid$|gclid$|ref$|source$)/;
+
+/**
+ * Normalize a web URL into a dedup key: lowercase host, strip leading 'www.', drop the
+ * fragment and tracking query params, strip a trailing slash from the path. Returns
+ * host + path + remaining query (no protocol), or null if the input is not a valid
+ * http(s) URL. e.g. "https://www.example.com/post/?utm_source=x" → "example.com/post".
+ */
+export function normalizeUrl(input: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const path = parsed.pathname.replace(/\/$/, '');
+  const params = new URLSearchParams();
+  for (const [key, value] of parsed.searchParams) {
+    if (!TRACKING_PARAM_RE.test(key.toLowerCase())) params.append(key, value);
+  }
+  params.sort();
+  const query = params.toString();
+  return host + path + (query ? `?${query}` : '');
+}
+
 /** Strip an ORCID URL down to bare ####-####-####-###[X] form; null if it doesn't validate. */
 export function normalizeOrcid(input: string): string | null {
   const bare = input
@@ -54,6 +82,8 @@ export interface ExternalIds {
   doi?: string | null;
   arxiv_id?: string | null;
   openalex_id?: string | null;
+  /** Already-normalized dedup key (from normalizeUrl), not a raw URL. */
+  url_normalized?: string | null;
   title?: string;
 }
 
@@ -76,6 +106,12 @@ export function findExisting(ids: ExternalIds): Work | undefined {
   }
   if (ids.openalex_id) {
     const row = db.prepare('SELECT * FROM works WHERE openalex_id = ?').get(normalizeOpenalexId(ids.openalex_id)) as
+      | Work
+      | undefined;
+    if (row) return row;
+  }
+  if (ids.url_normalized) {
+    const row = db.prepare('SELECT * FROM works WHERE url_normalized = ?').get(ids.url_normalized) as
       | Work
       | undefined;
     if (row) return row;

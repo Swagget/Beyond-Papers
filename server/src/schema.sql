@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 CREATE TABLE IF NOT EXISTS works (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind               TEXT NOT NULL CHECK (kind IN ('paper','review','replication','concept','dataset','code')),
+  kind               TEXT NOT NULL CHECK (kind IN ('paper','review','replication','concept','dataset','code','blog')),
   result_nature      TEXT NOT NULL DEFAULT 'na' CHECK (result_nature IN ('positive','negative','null','inconclusive','na')),
   editing            TEXT NOT NULL DEFAULT 'authored' CHECK (editing IN ('authored','communal')),
   title              TEXT NOT NULL,
@@ -39,13 +39,17 @@ CREATE TABLE IF NOT EXISTS works (
   doi                TEXT UNIQUE,
   arxiv_id           TEXT UNIQUE,             -- base id, no version suffix, e.g. "2301.12345"
   openalex_id        TEXT UNIQUE,
-  source             TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','openalex','crossref','arxiv','pubmed')),
+  url                TEXT,                    -- canonical URL for web-native works (post-redirect display form)
+  url_normalized     TEXT UNIQUE,             -- dedup key: host+path, www./tracking params stripped; NULL for papers
+  site_name          TEXT,                    -- venue display for web-native works, e.g. "Transformer Circuits"
+  source             TEXT NOT NULL DEFAULT 'native' CHECK (source IN ('native','openalex','crossref','arxiv','pubmed','web')),
   license            TEXT NOT NULL DEFAULT 'unknown' CHECK (license IN (
                         'cc-by','cc-by-sa','cc0','public-domain','platform-cc-by-sa',
                         'cc-by-nd',
                         'arxiv-default','cc-by-nc','cc-by-nc-sa','cc-by-nc-nd','closed','unknown'
                       )),
   tier               TEXT NOT NULL DEFAULT 'A' CHECK (tier IN ('A','B','C')),
+  publication_status TEXT NOT NULL DEFAULT 'published' CHECK (publication_status IN ('published','preprint','informal')),
   publication_year   INTEGER,                 -- display + BibTeX year; created_at drives recency ranking
   current_version_id INTEGER REFERENCES work_versions(id),
   created_by         INTEGER REFERENCES users(id),   -- NULL for imported works
@@ -57,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_works_kind ON works(kind);
 CREATE INDEX IF NOT EXISTS idx_works_tier ON works(tier);
 CREATE INDEX IF NOT EXISTS idx_works_result_nature ON works(result_nature);
 CREATE INDEX IF NOT EXISTS idx_works_created_by ON works(created_by);
+CREATE INDEX IF NOT EXISTS idx_works_publication_status ON works(publication_status);
 
 -- Immutable, content-addressed versions (§1.3). Rows are never UPDATEd or DELETEd by application code.
 CREATE TABLE IF NOT EXISTS work_versions (

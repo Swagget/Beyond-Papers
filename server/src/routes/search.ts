@@ -29,6 +29,7 @@ router.get(
     const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
     const resultNature = typeof req.query.result_nature === 'string' ? req.query.result_nature : undefined;
     const tier = typeof req.query.tier === 'string' ? req.query.tier : undefined;
+    const publicationStatus = typeof req.query.publication_status === 'string' ? req.query.publication_status : undefined;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'relevance';
@@ -49,6 +50,10 @@ router.get(
     if (tier) {
       filters.push('works.tier = ?');
       filterParams.push(tier);
+    }
+    if (publicationStatus) {
+      filters.push('works.publication_status = ?');
+      filterParams.push(publicationStatus);
     }
     const filterClause = filters.length ? `AND ${filters.join(' AND ')}` : '';
 

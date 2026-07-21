@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { WorkDetail } from '@shared/types';
+import type { PublicationStatus, WorkDetail } from '@shared/types';
+import { PUBLICATION_STATUSES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import { useAuth } from '../auth';
 import WorkForm, { type WorkFormPayload } from '../components/WorkForm';
@@ -15,6 +16,7 @@ export default function EditWorkPage() {
   const [work, setWork] = useState<WorkDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [publicationStatus, setPublicationStatus] = useState<PublicationStatus>('published');
 
   useEffect(() => {
     if (!id) return;
@@ -24,7 +26,10 @@ export default function EditWorkPage() {
     api
       .get<{ work: WorkDetail }>(`/api/works/${id}`)
       .then((res) => {
-        if (!cancelled) setWork(res.work);
+        if (!cancelled) {
+          setWork(res.work);
+          setPublicationStatus(res.work.publication_status);
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -105,6 +110,7 @@ export default function EditWorkPage() {
       sections: payload.sections,
       references: payload.references,
       license: payload.license,
+      ...(publicationStatus !== work!.publication_status ? { publication_status: publicationStatus } : {}),
     });
     navigate(`/works/${res.work.id}`);
   }
@@ -114,6 +120,24 @@ export default function EditWorkPage() {
       <div>
         <h1>Edit “{work.title}”</h1>
         <p className="muted">Saving creates a new immutable version (§1.3).</p>
+      </div>
+      <div className="field" style={{ maxWidth: '16rem' }}>
+        <label htmlFor="edit-publication-status">Publication status</label>
+        <select
+          id="edit-publication-status"
+          value={publicationStatus}
+          onChange={(e) => setPublicationStatus(e.target.value as PublicationStatus)}
+        >
+          {PUBLICATION_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <p className="field-hint">
+          Work-level metadata, saved with the version below — published, preprint, or informal (blogs, native
+          works).
+        </p>
       </div>
       <WorkForm
         mode="edit"

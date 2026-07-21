@@ -131,6 +131,7 @@ export async function importArxiv(arxivIdRaw: string): Promise<ImportResult> {
   const work = createWork({
     kind: 'paper',
     source: 'arxiv',
+    publication_status: 'preprint',
     created_by: null,
     title,
     abstract,

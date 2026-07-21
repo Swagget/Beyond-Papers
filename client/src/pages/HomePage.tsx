@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import type {
   ExternalSearchHit,
   ExternalSearchResponse,
+  PublicationStatus,
   ResultNature,
   SearchResponse,
   Tier,
@@ -27,6 +28,14 @@ const KIND_OPTIONS: Array<{ value: WorkKind | ''; label: string }> = [
   { value: 'concept', label: 'Concept' },
   { value: 'dataset', label: 'Dataset' },
   { value: 'code', label: 'Code' },
+  { value: 'blog', label: 'Blog' },
+];
+
+const STATUS_OPTIONS: Array<{ value: PublicationStatus | ''; label: string }> = [
+  { value: '', label: 'All statuses' },
+  { value: 'published', label: 'Published' },
+  { value: 'preprint', label: 'Preprint' },
+  { value: 'informal', label: 'Informal' },
 ];
 
 const RESULT_NATURE_OPTIONS: Array<{ value: ResultNature | ''; label: string }> = [
@@ -56,6 +65,7 @@ export default function HomePage() {
   const kind = searchParams.get('kind') ?? '';
   const resultNature = searchParams.get('result_nature') ?? '';
   const tier = searchParams.get('tier') ?? '';
+  const publicationStatus = searchParams.get('publication_status') ?? '';
   const sort = searchParams.get('sort') ?? '';
   const offset = Math.max(0, Number(searchParams.get('offset') ?? '0') || 0);
 
@@ -102,6 +112,7 @@ export default function HomePage() {
     if (kind) params.set('kind', kind);
     if (resultNature) params.set('result_nature', resultNature);
     if (tier) params.set('tier', tier);
+    if (publicationStatus) params.set('publication_status', publicationStatus);
     if (sort) params.set('sort', sort);
     params.set('limit', String(LIMIT));
     params.set('offset', String(offset));
@@ -122,9 +133,9 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [q, kind, resultNature, tier, sort, offset]);
+  }, [q, kind, resultNature, tier, publicationStatus, sort, offset]);
 
-  const updateFilter = (key: 'kind' | 'result_nature' | 'tier' | 'sort', value: string) => {
+  const updateFilter = (key: 'kind' | 'result_nature' | 'tier' | 'publication_status' | 'sort', value: string) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value);
     else next.delete(key);
@@ -157,7 +168,7 @@ export default function HomePage() {
               Submit a work
             </Link>
             <Link to="/import" className="btn btn-ghost btn-sm">
-              Import by DOI / arXiv
+              Import by DOI / arXiv / URL
             </Link>
             <Link to="/about" className="btn btn-ghost btn-sm">
               About Beyond Papers
@@ -202,6 +213,20 @@ export default function HomePage() {
           </select>
         </div>
         <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="filter-publication-status">Status</label>
+          <select
+            id="filter-publication-status"
+            value={publicationStatus}
+            onChange={(e) => updateFilter('publication_status', e.target.value)}
+          >
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
           <label htmlFor="filter-sort">Sort by</label>
           <select id="filter-sort" value={sort} onChange={(e) => updateFilter('sort', e.target.value)}>
             {SORT_OPTIONS.map((o) => (
@@ -232,7 +257,7 @@ export default function HomePage() {
         <div className="empty-state">
           <p className="empty-state-title">No works found</p>
           <p className="empty-state-body">
-            {q || kind || resultNature || tier
+            {q || kind || resultNature || tier || publicationStatus
               ? 'Try a different search term or clear the filters.'
               : 'Nothing has been published yet — be the first to submit or import a work.'}
           </p>

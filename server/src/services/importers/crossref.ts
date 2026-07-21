@@ -90,6 +90,7 @@ export async function importDoi(doiRaw: string): Promise<ImportResult> {
   const work = createWork({
     kind: 'paper',
     source: 'crossref',
+    publication_status: 'published',
     created_by: null,
     title,
     abstract,

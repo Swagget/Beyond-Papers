@@ -2,8 +2,8 @@
 import { Router } from 'express';
 import { db } from '../db.js';
 import { notFound, validationError, wrapAsync } from '../lib/errors.js';
-import { EDGE_TYPES } from '../../../shared/types.js';
-import type { EdgeType, GraphEdge, GraphNode, GraphResponse } from '../../../shared/types.js';
+import { EDGE_TYPES, PUBLICATION_STATUSES } from '../../../shared/types.js';
+import type { EdgeType, GraphEdge, GraphNode, GraphResponse, PublicationStatus } from '../../../shared/types.js';
 
 const router = Router();
 
@@ -26,6 +26,7 @@ interface EdgeRow {
 function parseGraphFilters(req: { query: Record<string, unknown> }): {
   types: EdgeType[] | undefined;
   includeAi: boolean;
+  publicationStatus: PublicationStatus | undefined;
 } {
   let types: EdgeType[] | undefined;
   const rawTypes = req.query.types;
@@ -41,7 +42,15 @@ function parseGraphFilters(req: { query: Record<string, unknown> }): {
     }
     types = requested as EdgeType[];
   }
-  return { types, includeAi: req.query.include_ai === 'true' };
+  let publicationStatus: PublicationStatus | undefined;
+  const rawStatus = req.query.publication_status;
+  if (typeof rawStatus === 'string' && rawStatus.length > 0) {
+    if (!(PUBLICATION_STATUSES as string[]).includes(rawStatus)) {
+      throw validationError(`publication_status must be one of ${PUBLICATION_STATUSES.join(', ')}`);
+    }
+    publicationStatus = rawStatus as PublicationStatus;
+  }
+  return { types, includeAi: req.query.include_ai === 'true', publicationStatus };
 }
 
 /** Works rows (with corpus-wide degree) for a set of ids. */
@@ -49,7 +58,7 @@ function fetchGraphNodes(idList: number[]): GraphNode[] {
   if (idList.length === 0) return [];
   return db
     .prepare(
-      `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
+      `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_status, w.publication_year,
               (SELECT COUNT(*) FROM edges e
                WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
        FROM works w WHERE w.id IN (${idList.map(() => '?').join(',')})`,
@@ -68,6 +77,7 @@ function collectNeighborhood(
   direction: Direction,
   types: EdgeType[] | undefined,
   includeAi: boolean,
+  publicationStatus?: PublicationStatus,
 ): { nodeIds: Set<number>; truncated: boolean } {
   const aiClause = includeAi ? '' : `AND NOT (origin = 'ai' AND status = 'suggested')`;
   const typeClause = types && types.length > 0 ? `AND type IN (${types.map(() => '?').join(',')})` : '';
@@ -79,6 +89,11 @@ function collectNeighborhood(
     `SELECT source_work_id, target_work_id FROM edges WHERE target_work_id = ? AND ${baseClause}`,
   );
   const typeParams = types ?? [];
+  // Node-level publication_status constraint applies to discovered neighbors only —
+  // roots/focus ids are always kept so a focused view can't erase its own anchor.
+  const statusStmt = publicationStatus
+    ? db.prepare('SELECT 1 FROM works WHERE id = ? AND publication_status = ?')
+    : null;
 
   const nodeIds = new Set<number>(rootIds);
   let truncated = false;
@@ -98,6 +113,7 @@ function collectNeighborhood(
       for (const row of rows) {
         const neighbor = row.source_work_id === current ? row.target_work_id : row.source_work_id;
         if (nodeIds.has(neighbor)) continue;
+        if (statusStmt && !statusStmt.get(neighbor, publicationStatus)) continue;
         if (nodeIds.size >= MAX_NODES) {
           truncated = true;
           continue;
@@ -167,7 +183,7 @@ function parseFocusIds(raw: unknown): number[] | undefined {
 router.get(
   '/',
   wrapAsync(async (req, res) => {
-    const { types, includeAi } = parseGraphFilters(req as { query: Record<string, unknown> });
+    const { types, includeAi, publicationStatus } = parseGraphFilters(req as { query: Record<string, unknown> });
     const focusIds = parseFocusIds(req.query.focus);
 
     if (focusIds) {
@@ -185,6 +201,7 @@ router.get(
         'both',
         types,
         includeAi,
+        publicationStatus,
       );
       const idList = Array.from(nodeIds);
       const { edges, truncated: truncatedEdges } = fetchEdgesAmong(idList, types, includeAi);
@@ -199,16 +216,19 @@ router.get(
       return;
     }
 
+    const statusClause = publicationStatus ? 'WHERE w.publication_status = ?' : '';
+    const statusParams = publicationStatus ? [publicationStatus] : [];
     const nodeRows = db
       .prepare(
-        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_year,
+        `SELECT w.id, w.kind, w.title, w.result_nature, w.tier, w.publication_status, w.publication_year,
                 (SELECT COUNT(*) FROM edges e
                  WHERE (e.source_work_id = w.id OR e.target_work_id = w.id) AND e.status != 'rejected') AS degree
          FROM works w
+         ${statusClause}
          ORDER BY degree DESC, w.created_at DESC
          LIMIT ?`,
       )
-      .all(MAX_NODES + 1) as GraphNode[];
+      .all(...statusParams, MAX_NODES + 1) as GraphNode[];
 
     const truncatedNodes = nodeRows.length > MAX_NODES;
     const nodes: GraphNode[] = nodeRows.slice(0, MAX_NODES);
@@ -262,6 +282,13 @@ router.get(
     }
 
     const includeAi = req.query.include_ai === 'true';
+    let publicationStatus: PublicationStatus | undefined;
+    if (typeof req.query.publication_status === 'string' && req.query.publication_status.length > 0) {
+      if (!(PUBLICATION_STATUSES as string[]).includes(req.query.publication_status)) {
+        throw validationError(`publication_status must be one of ${PUBLICATION_STATUSES.join(', ')}`);
+      }
+      publicationStatus = req.query.publication_status as PublicationStatus;
+    }
 
     const rootWork = db.prepare('SELECT id FROM works WHERE id = ?').get(rootId) as { id: number } | undefined;
     if (!rootWork) throw notFound('Work not found');
@@ -272,6 +299,7 @@ router.get(
       direction,
       types,
       includeAi,
+      publicationStatus,
     );
     const idList = Array.from(nodeIds);
     const { edges, truncated: truncatedEdges } = fetchEdgesAmong(idList, types, includeAi);

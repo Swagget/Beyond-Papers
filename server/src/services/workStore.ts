@@ -11,6 +11,7 @@ import type {
   CreditRole,
   EditingMode,
   LicenseId,
+  PublicationStatus,
   ResultNature,
   Section,
   Reference,
@@ -121,6 +122,10 @@ export interface CreateWorkInput {
   doi?: string | null;
   arxiv_id?: string | null;
   openalex_id?: string | null;
+  url?: string | null;
+  url_normalized?: string | null;
+  site_name?: string | null;
+  publication_status?: PublicationStatus;
   publication_year?: number | null;
   created_by?: number | null;
   change_note?: string | null;
@@ -145,8 +150,9 @@ export function createWork(input: CreateWorkInput): WorkDetail {
     const workResult = db
       .prepare(
         `INSERT INTO works (kind, result_nature, editing, title, abstract, doi, arxiv_id, openalex_id,
-                            source, license, tier, publication_year, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            url, url_normalized, site_name, source, license, tier, publication_status,
+                            publication_year, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.kind,
@@ -157,9 +163,13 @@ export function createWork(input: CreateWorkInput): WorkDetail {
         input.doi ?? null,
         input.arxiv_id ?? null,
         input.openalex_id ?? null,
+        input.url ?? null,
+        input.url_normalized ?? null,
+        input.site_name ?? null,
         input.source ?? 'native',
         input.license,
         tier,
+        input.publication_status ?? 'published',
         input.publication_year ?? null,
         input.created_by ?? null,
       );

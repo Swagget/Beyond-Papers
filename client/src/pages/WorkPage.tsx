@@ -9,7 +9,7 @@ import type { AiOutput, Comment, EdgeDetail, SubunitType, WorkChat, WorkDetail, 
 import { SUBUNIT_TYPES } from '@shared/types';
 import { api, ApiRequestError } from '../api';
 import { useAuth } from '../auth';
-import { KindBadge, ResultBadge, TierBadge } from '../components/Badges';
+import { KindBadge, PublicationStatusBadge, ResultBadge, TierBadge } from '../components/Badges';
 import AiPanel from '../components/work/AiPanel';
 import CommentThread from '../components/work/CommentThread';
 import EdgePanel from '../components/work/EdgePanel';
@@ -230,8 +230,14 @@ export default function WorkPage() {
           <div className="row flex-wrap gap-2" data-print-hide>
             <TierBadge tier={work.tier} license={work.license} />
             <KindBadge kind={work.kind} />
+            <PublicationStatusBadge status={work.publication_status} />
             <ResultBadge nature={work.result_nature} />
             {work.editing === 'communal' ? <span className="badge">Communal</span> : null}
+            {work.url ? (
+              <a href={work.url} target="_blank" rel="noreferrer" className="small">
+                {work.site_name ?? (() => { try { return new URL(work.url).hostname.replace(/^www\./, ''); } catch { return work.url; } })()} ↗
+              </a>
+            ) : null}
           </div>
 
           <h1 style={{ marginTop: 'var(--space-3)' }}>{work.title}</h1>
@@ -277,6 +283,11 @@ export default function WorkPage() {
                   {work.arxiv_id ? (
                     <a href={`https://arxiv.org/abs/${work.arxiv_id}`} target="_blank" rel="noreferrer">
                       arXiv:{work.arxiv_id}
+                    </a>
+                  ) : null}
+                  {work.url && !work.doi && !work.arxiv_id ? (
+                    <a href={work.url} target="_blank" rel="noreferrer">
+                      Read at {work.site_name ?? 'the source'}
                     </a>
                   ) : null}
                 </p>
@@ -342,6 +353,11 @@ export default function WorkPage() {
           {/* ---------------- Export bar ---------------- */}
           <div className="stack gap-2" style={{ marginTop: 'var(--space-6)' }} data-print-hide>
             <div className="row flex-wrap gap-2">
+              {work.url ? (
+                <a className="btn btn-ghost btn-sm" href={work.url} target="_blank" rel="noreferrer">
+                  Read at {work.site_name ?? 'source'} ↗
+                </a>
+              ) : null}
               <a className="btn btn-ghost btn-sm" href={`/api/works/${work.id}/export/latex`}>
                 LaTeX
               </a>

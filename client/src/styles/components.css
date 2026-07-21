@@ -865,6 +865,16 @@ AI-suggested:
   color: var(--color-ai-strong);
 }
 
+/* Node-shape swatch: blogs/web articles render as rounded rectangles in the graph. */
+.graph-legend-swatch-node-blog {
+  width: 1.25rem;
+  height: 0.875rem;
+  border: var(--border-width-thick) solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
 /* Focus-mode typeahead results under the "Add paper" input. */
 .focus-search-results {
   margin-top: var(--space-1);

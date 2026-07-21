@@ -153,6 +153,16 @@ export function renderBibtex(work: WorkDetail): string {
   fields.push(bibField('author', author));
   fields.push(bibField('year', year));
   if (work.doi) fields.push(bibField('doi', work.doi));
+
+  // Web-native works cite as @misc with howpublished — there is no journal to point at.
+  if (work.kind === 'blog') {
+    // Not via bibField — its brace-escaping would mangle the \url{} macro itself.
+    if (work.url) fields.push(`  howpublished = {\\url{${work.url.replace(/[{}]/g, '')}}}`);
+    const noteParts = [work.site_name, `Beyond Papers node #${work.id}, tier ${work.tier}, license ${work.license}`];
+    fields.push(bibField('note', noteParts.filter(Boolean).join('. ')));
+    return `@misc{bp${work.id},\n${fields.join(',\n')}\n}\n`;
+  }
+
   fields.push(bibField('note', `Beyond Papers node #${work.id}, tier ${work.tier}, license ${work.license}`));
 
   return `@article{bp${work.id},\n${fields.join(',\n')}\n}\n`;

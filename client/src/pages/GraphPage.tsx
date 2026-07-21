@@ -26,6 +26,7 @@ import {
   EdgeStatusBadge,
   ConfidencePct,
   KindBadge,
+  PublicationStatusBadge,
   ResultBadge,
   TierBadge,
 } from '../components/Badges';
@@ -90,6 +91,8 @@ export default function GraphPage() {
   const [direction, setDirection] = useState<GraphDirection>('both');
   const [selectedTypes, setSelectedTypes] = useState<Set<EdgeType>>(new Set(EDGE_TYPES));
   const [includeAi, setIncludeAi] = useState(false);
+  // Off by default: preprints and blogs are first-class here; this is a lens, not a gate.
+  const [publishedOnly, setPublishedOnly] = useState(false);
 
   // Focus mode (overview only): show just these works + their neighborhood.
   // Lives in the URL so focused views are shareable and survive reloads.
@@ -220,6 +223,7 @@ export default function GraphPage() {
       params.set('depth', String(focusDepth));
     }
     params.set('include_ai', String(includeAi));
+    if (publishedOnly) params.set('publication_status', 'published');
     if (selectedTypes.size < EDGE_TYPES.length) {
       params.set('types', typesKey);
     }
@@ -243,7 +247,7 @@ export default function GraphPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, depth, direction, includeAi, typesKey, focusKey, focusDepth]);
+  }, [id, depth, direction, includeAi, publishedOnly, typesKey, focusKey, focusDepth]);
 
   // Build/destroy the cytoscape instance whenever the fetched data changes.
   useEffect(() => {
@@ -256,6 +260,7 @@ export default function GraphPage() {
         id: String(n.id),
         label: truncateTitle(n.title),
         fullTitle: n.title,
+        kind: n.kind,
         tier: n.tier,
         resultNature: n.result_nature,
         isRoot: n.id === data.root_id || focusSet.has(n.id) ? 'true' : 'false',
@@ -305,6 +310,9 @@ export default function GraphPage() {
             height: 'data(size)',
           },
         },
+        // Blogs/web articles are rounded rectangles — shape is the free visual channel
+        // (border color = tier, background = result nature stay untouched).
+        { selector: 'node[kind = "blog"]', style: { shape: 'round-rectangle' } },
         { selector: 'node[tier = "A"]', style: { 'border-color': TIER_BORDER_HEX.A } },
         { selector: 'node[tier = "B"]', style: { 'border-color': TIER_BORDER_HEX.B } },
         { selector: 'node[tier = "C"]', style: { 'border-color': TIER_BORDER_HEX.C } },
@@ -656,6 +664,19 @@ export default function GraphPage() {
                 Off by default — authoritative traversal excludes unconfirmed AI suggestions (§4.2).
               </p>
             </div>
+            <div className="field">
+              <label className="row gap-2">
+                <input
+                  type="checkbox"
+                  checked={publishedOnly}
+                  onChange={(e) => setPublishedOnly(e.target.checked)}
+                />
+                Published only
+              </label>
+              <p className="field-hint">
+                Hide preprints, blogs, and other non-published works.
+              </p>
+            </div>
           </fieldset>
         </aside>
 
@@ -732,6 +753,7 @@ export default function GraphPage() {
             <div className="graph-node-panel">
               <div className="row gap-2 items-center flex-wrap">
                 <KindBadge kind={selectedNode.kind} />
+                <PublicationStatusBadge status={selectedNode.publication_status} />
                 <TierBadge tier={selectedNode.tier} />
                 <ResultBadge nature={selectedNode.result_nature} />
               </div>
@@ -797,6 +819,10 @@ export default function GraphPage() {
             <li className="graph-legend-item graph-legend-item-ai">
               <span className="graph-legend-swatch graph-legend-swatch-dashed" />
               AI-suggested, unconfirmed
+            </li>
+            <li className="graph-legend-item">
+              <span className="graph-legend-swatch graph-legend-swatch-node-blog" />
+              blog / web article
             </li>
           </ul>
           <p className="field-hint">
